@@ -1,0 +1,24 @@
+{
+  "name": "logline",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "logline": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev:scan": "tsx src/cli.ts scan",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "glob": "^11.0.3",
+    "openai": "^4.80.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  }
+}
