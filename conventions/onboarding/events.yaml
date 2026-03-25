@@ -1,0 +1,218 @@
+domain: onboarding
+description: >
+  Conventions for user registration and initial account setup flows.
+  Covers signup, email verification, and generic onboarding step progression.
+  Step names are discovered by scanning the product's actual onboarding flow.
+status: stable
+version: "1.0"
+
+# Lifecycle pattern reference:
+#   attempt  → user initiated the action
+#   success  → action completed successfully
+#   fail     → action failed (always include error_type)
+#   start    → a multi-step or async process began
+#   complete → a multi-step or async process finished
+#   skip     → user intentionally bypassed a step
+
+events:
+
+  - name: signup_attempt
+    lifecycle: attempt
+    description: >
+      User initiates the registration flow. Fire when the signup form is
+      submitted, OAuth redirect begins, or SSO flow starts.
+    attributes:
+      required:
+        - name: signup_method
+          type: enum
+          values: [email, google, github, apple, sso, saml]
+          description: The authentication method chosen for registration.
+      optional:
+        - name: referral_source
+          type: string
+          description: How the user discovered the product.
+        - name: utm_source
+          type: string
+          description: UTM source parameter from the landing URL.
+        - name: utm_medium
+          type: string
+          description: UTM medium parameter from the landing URL.
+        - name: utm_campaign
+          type: string
+          description: UTM campaign parameter from the landing URL.
+        - name: invite_token
+          type: string
+          description: Token if user arrived via an invitation link.
+
+  - name: signup_success
+    lifecycle: success
+    description: >
+      Account successfully created. Fire after the backend confirms
+      the account exists and credentials are stored.
+    attributes:
+      required:
+        - name: signup_method
+          type: enum
+          values: [email, google, github, apple, sso, saml]
+          description: The authentication method used to complete registration.
+      optional:
+        - name: time_to_complete_ms
+          type: number
+          description: Milliseconds from signup_attempt to signup_success.
+
+  - name: signup_fail
+    lifecycle: fail
+    description: >
+      Registration failed. Fire when account creation is rejected.
+    attributes:
+      required:
+        - name: signup_method
+          type: enum
+          values: [email, google, github, apple, sso, saml]
+          description: The authentication method that was attempted.
+        - name: error_type
+          type: enum
+          values: [email_taken, invalid_email, password_weak, oauth_error, sso_config_error, rate_limited, server_error, unknown]
+          description: Category of failure.
+      optional:
+        - name: error_message
+          type: string
+          description: Human-readable error detail (do not include PII).
+
+  - name: email_verification_send
+    lifecycle: attempt
+    description: >
+      Verification email dispatched to the user. Fire when the backend
+      triggers the email send.
+    attributes:
+      required: []
+      optional:
+        - name: is_resend
+          type: boolean
+          description: True if this is a re-send (user clicked "resend email").
+        - name: resend_count
+          type: number
+          description: Total number of times verification email has been sent.
+
+  - name: email_verification_success
+    lifecycle: success
+    description: >
+      User successfully verified their email. Fire when the verification
+      token is validated.
+    attributes:
+      required: []
+      optional:
+        - name: time_to_verify_ms
+          type: number
+          description: Milliseconds from signup_success to email_verification_success.
+
+  - name: email_verification_fail
+    lifecycle: fail
+    description: >
+      Email verification failed. Fire when the token is invalid,
+      expired, or already used.
+    attributes:
+      required:
+        - name: error_type
+          type: enum
+          values: [token_expired, token_invalid, token_already_used, server_error, unknown]
+          description: Category of verification failure.
+      optional: []
+
+  - name: onboarding_step_start
+    lifecycle: start
+    description: >
+      User begins an onboarding step. Fire when the step screen or
+      form is rendered. The step_name is detected from the codebase.
+    attributes:
+      required:
+        - name: flow_id
+          type: string
+          description: >
+            Unique identifier for this onboarding session. Generate a new
+            flow_id each time a user enters the onboarding flow.
+        - name: step_name
+          type: string
+          description: >
+            Name of the onboarding step as detected from the codebase.
+            Examples: profile_setup, workspace_creation, template_selection,
+            invite_teammates, connect_integration, choose_use_case.
+        - name: step_position
+          type: number
+          description: Position of this step in the onboarding flow (1-indexed).
+      optional:
+        - name: total_steps
+          type: number
+          description: Total number of steps in the onboarding flow.
+        - name: step_index
+          type: number
+          description: >
+            Monotonically increasing counter across all onboarding events
+            within a flow_id. Provides deterministic ordering without
+            relying on timestamp precision.
+
+  - name: onboarding_step_complete
+    lifecycle: complete
+    description: >
+      User finishes an onboarding step. Fire when the step is
+      submitted and saved successfully.
+    attributes:
+      required:
+        - name: flow_id
+          type: string
+          description: Unique identifier for this onboarding session.
+        - name: step_name
+          type: string
+          description: Name of the onboarding step as detected from the codebase.
+        - name: step_position
+          type: number
+          description: Position of this step in the onboarding flow (1-indexed).
+      optional:
+        - name: time_to_complete_ms
+          type: number
+          description: Milliseconds from onboarding_step_start to complete for this step.
+        - name: step_index
+          type: number
+          description: Monotonically increasing counter within the flow_id.
+
+  - name: onboarding_step_skip
+    lifecycle: skip
+    description: >
+      User skips an onboarding step. Fire when the user clicks skip
+      or navigates past a step without completing it.
+    attributes:
+      required:
+        - name: flow_id
+          type: string
+          description: Unique identifier for this onboarding session.
+        - name: step_name
+          type: string
+          description: Name of the onboarding step that was skipped.
+        - name: step_position
+          type: number
+          description: Position of this step in the onboarding flow (1-indexed).
+      optional:
+        - name: step_index
+          type: number
+          description: Monotonically increasing counter within the flow_id.
+
+  - name: onboarding_complete
+    lifecycle: complete
+    description: >
+      User finishes the entire onboarding flow. Fire when the user
+      reaches the end of all onboarding steps (completed or skipped).
+    attributes:
+      required:
+        - name: flow_id
+          type: string
+          description: Unique identifier for this onboarding session.
+        - name: steps_completed
+          type: number
+          description: Number of steps the user completed.
+        - name: steps_skipped
+          type: number
+          description: Number of steps the user skipped.
+      optional:
+        - name: total_time_ms
+          type: number
+          description: Milliseconds from first onboarding_step_start to onboarding_complete.
