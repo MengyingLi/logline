@@ -6,7 +6,24 @@
  */
 
 import type { CodeLocation, ProductProfile } from '../types';
-import type { InteractionTypes } from './interaction-scanner';
+
+// Defined locally so tracking-gap-detector has no dependency on interaction-scanner
+type InteractionTypes = {
+  actorToObject: Array<{
+    actor: 'User' | 'System';
+    action: string;
+    object: string;
+    suggestedEvent: string;
+    ambiguous?: boolean;
+    rawHandler?: string;
+    location?: CodeLocation;
+    searchPatterns?: string[];
+    hint?: string;
+  }>;
+  actorToActor: Array<any>;
+  actorToActorViaObject: Array<any>;
+  systemToObject: Array<any>;
+};
 
 export interface TrackingGap {
   suggestedEvent: string;
