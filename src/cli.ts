@@ -2,13 +2,22 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { initCommand } from './commands/init';
 import { scanCommand } from './commands/scan';
-import { specAllCommand } from './commands/spec';
+import { specCommand } from './commands/spec';
 import { prCommand } from './commands/pr';
 
 const program = new Command();
 
 program.name('logline').description('Logline').version('0.1.0');
+
+program
+  .command('init')
+  .description('Initialize Logline in your project')
+  .action(async () => {
+    console.log(chalk.bold('\n📦 Initializing Logline...\n'));
+    await initCommand({});
+  });
 
 program
   .command('scan')
@@ -29,12 +38,9 @@ program
 
 program
   .command('spec')
-  .argument('[type]', 'Type of spec to generate', 'all')
-  .description('Generate event specifications')
-  .action(async (type) => {
-    if (type === 'all') {
-      await specAllCommand({});
-    }
+  .description('Generate or update the tracking plan')
+  .action(async () => {
+    await specCommand({});
   });
 
 program
@@ -122,6 +128,35 @@ function printScanResult(result: Awaited<ReturnType<typeof scanCommand>>): void 
     console.log();
   }
 
-  console.log(chalk.dim('Run `logline spec all` to generate specs for missing events.'));
+  // Convention coverage (when conventions apply)
+  const conventionCoverage = result.conventionCoverage;
+  if (conventionCoverage?.length) {
+    for (const cov of conventionCoverage) {
+      console.log(chalk.bold(`🎯 Convention Coverage: ${cov.domain}`));
+      console.log();
+      if (cov.matched.length) {
+        console.log(chalk.bold('Matched:'));
+        for (const m of cov.matched) {
+          console.log(`  ${chalk.green('✓')} ${chalk.bold(m.eventName.padEnd(24))} ${m.location}`);
+          if (m.missingRequired.length) {
+            console.log(chalk.yellow(`    ⚠ Missing required: ${m.missingRequired.join(', ')}${m.requiredHint ? ` (${m.requiredHint})` : ''}`));
+          } else {
+            console.log(chalk.dim('    ✓ All required attributes present'));
+          }
+        }
+        console.log();
+      }
+      if (cov.missing.length) {
+        console.log(chalk.bold('Missing:'));
+        for (const m of cov.missing) {
+          console.log(`  ${chalk.yellow('✗')} ${chalk.bold(m.eventName.padEnd(24))} ${chalk.dim(m.reason)}`);
+          if (m.required.length) console.log(chalk.dim(`    Required: ${m.required.join(', ')}`));
+        }
+        console.log();
+      }
+    }
+  }
+
+  console.log(chalk.dim('Run `logline spec` to update your tracking plan.'));
 }
 
