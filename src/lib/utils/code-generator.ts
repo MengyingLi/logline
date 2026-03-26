@@ -1,4 +1,5 @@
 import type { TrackingGap } from '../discovery/tracking-gap-detector';
+import { analyzeScope, type ScopeVariable } from './scope-analyzer';
 
 export interface CodeContext {
   availableVariables: Map<string, string>;
@@ -12,18 +13,19 @@ export interface CodeContext {
 export function generateTrackingCode(
   gap: TrackingGap,
   fileContent?: string,
-  effectiveLine?: number
+  effectiveLine?: number,
+  options?: { functionName?: string }
 ): string {
   const targetLine = effectiveLine ?? gap.location?.line ?? 0;
-  const context = fileContent ? analyzeCodeContext(fileContent, targetLine) : null;
-  const props = inferProperties(gap, context);
+  const props = fileContent ? inferProperties(gap, fileContent, targetLine) : inferPropertiesFallback(gap);
+  const fn = options?.functionName?.trim() ? options.functionName.trim() : 'track';
 
   const propsStr = props
     .map((p) => `  ${p.name}: ${p.value},${p.todo ? ' // TODO: verify' : ''}`)
     .join('\n');
 
   return `// Logline: ${gap.suggestedEvent}
-track('${gap.suggestedEvent}', {
+${fn}('${gap.suggestedEvent}', {
 ${propsStr}
 });`;
 }
@@ -122,90 +124,65 @@ export function analyzeCodeContext(content: string, targetLine: number): CodeCon
   return context;
 }
 
-function inferPropertyFromParam(
-  paramName: string,
-  paramType: string | null,
-  objectName: string
-): { name: string; value: string } | null {
-  // If param is the object itself (template, workflow, step, item)
-  if (paramName === objectName || paramName === 'item' || paramName === 'data') {
-    return { name: `${objectName}_id`, value: `${paramName}?.id` };
-  }
-
-  // If param is a primitive type indicator (type, status, value, id)
-  if (['type', 'status', 'value', 'id', 'key', 'name'].includes(paramName)) {
-    return { name: `${objectName}_${paramName}`, value: paramName };
-  }
-
-  // If param type is a known enum/union (TriggerType, Status, etc.)
-  if (paramType?.includes('Type') || paramType?.includes('Status') || paramType?.includes('Kind')) {
-    return { name: `${objectName}_type`, value: paramName };
-  }
-
-  // Default: assume it's the object
-  return { name: `${objectName}_id`, value: `${paramName}?.id` };
-}
-
-function inferPropertiesFromHandler(
-  handlerSignature: string,
-  objectName: string
-): { name: string; value: string } | null {
-  // Extract first param: (type: TriggerType) or (template: WorkflowTemplate) or (step, index) or ()
-  const paramMatch = handlerSignature.match(/\(([^)]*)\)/);
-  if (!paramMatch || !paramMatch[1].trim()) return null;
-
-  const firstParam = paramMatch[1].split(',')[0].trim();
-  if (!firstParam) return null;
-
-  const colonIdx = firstParam.indexOf(':');
-  const paramName = colonIdx >= 0 ? firstParam.slice(0, colonIdx).trim() : firstParam.split('=')[0].trim();
-  const paramType = colonIdx >= 0 ? firstParam.slice(colonIdx + 1).trim() : null;
-
-  if (!paramName) return null;
-  return inferPropertyFromParam(paramName, paramType, objectName);
-}
-
 function inferProperties(
   gap: TrackingGap,
-  context: CodeContext | null
+  fileContent: string,
+  targetLine: number
 ): Array<{ name: string; value: string; todo: boolean }> {
+  const scope = analyzeScope(fileContent, targetLine);
   const props: Array<{ name: string; value: string; todo: boolean }> = [];
   const eventParts = gap.suggestedEvent.split('_');
   const objectName = eventParts.slice(0, -1).join('_') || 'unknown';
 
-  // 1. Check handler params first (trigger_type: type, template_id: template?.id)
-  const handlerProp = context?.handlerSignature
-    ? inferPropertiesFromHandler(context.handlerSignature, objectName)
-    : null;
-
-  if (handlerProp) {
-    props.push({ name: handlerProp.name, value: handlerProp.value, todo: false });
-  } else {
-    // 2. Fallback: infer object ID from variables
-    const hasObjectVar =
-      context?.availableVariables.has(objectName) || context?.stateVariables.includes(objectName);
-    if (hasObjectVar) {
-      props.push({ name: `${objectName}_id`, value: `${objectName}?.id`, todo: false });
-    } else if (objectName !== 'unknown') {
-      props.push({ name: `${objectName}_id`, value: `${objectName}?.id`, todo: true });
-    }
+  // 1) Primary object variable
+  const objectVar = findObjectVariable(scope, objectName);
+  if (objectVar && objectName !== 'unknown') {
+    const hasId = objectVar.properties?.includes('id') ?? false;
+    props.push({
+      name: `${objectName}_id`,
+      value: hasId ? `${objectVar.accessPath}.id` : `${objectVar.accessPath}?.id`,
+      todo: false,
+    });
+  } else if (objectName !== 'unknown') {
+    props.push({ name: `${objectName}_id`, value: `${objectName}?.id`, todo: true });
   }
 
-  // 3. Try to infer user ID
-  if (context?.hasAuthContext || context?.hasUserSession) {
-    props.push({ name: 'user_id', value: 'user?.id || session?.user?.id', todo: false });
+  // 2) User/auth variable
+  const userVar = findUserVariable(scope);
+  if (userVar) {
+    const isSession = userVar.name === 'session';
+    props.push({
+      name: 'user_id',
+      value: isSession ? `${userVar.accessPath}?.user?.id` : `${userVar.accessPath}?.id`,
+      todo: false,
+    });
   } else {
     props.push({ name: 'user_id', value: 'user?.id', todo: true });
   }
 
-  // 4. workflow_name for workflow events (skip if we used handler param for primitive like trigger_type)
-  if (objectName.includes('workflow') && !props.some((p) => p.name.startsWith('workflow_type'))) {
-    const hasWorkflow =
-      context?.availableVariables.has('workflow') || context?.stateVariables.includes('workflow');
+  // 3) Extra context from parameters (type/status-like)
+  const paramVars = scope.filter((v) => v.source === 'parameter');
+  for (const param of paramVars) {
+    const n = param.name.toLowerCase();
+    const isTypeOrStatus =
+      n === 'type' ||
+      n === 'status' ||
+      (param.type?.includes('Type') ?? false) ||
+      (param.type?.includes('Status') ?? false) ||
+      (param.type?.includes('Kind') ?? false);
+    if (!isTypeOrStatus) continue;
+    if (props.some((p) => p.name.includes('type') || p.name.includes('status'))) continue;
+    if (objectName === 'unknown') continue;
+    props.push({ name: `${objectName}_${param.name}`, value: param.accessPath, todo: false });
+  }
+
+  // 4) workflow_name if we actually have workflow in scope
+  if (objectName.includes('workflow')) {
+    const workflowVar = findObjectVariable(scope, 'workflow');
     props.push({
       name: 'workflow_name',
-      value: 'workflow?.name',
-      todo: !hasWorkflow,
+      value: `${workflowVar?.accessPath ?? 'workflow'}?.name`,
+      todo: !workflowVar,
     });
   }
 
@@ -219,4 +196,63 @@ function inferProperties(
   }
 
   return props;
+}
+
+function inferPropertiesFallback(gap: TrackingGap): Array<{ name: string; value: string; todo: boolean }> {
+  const eventParts = gap.suggestedEvent.split('_');
+  const objectName = eventParts.slice(0, -1).join('_') || 'unknown';
+  const props: Array<{ name: string; value: string; todo: boolean }> = [];
+  if (objectName !== 'unknown') {
+    props.push({ name: `${objectName}_id`, value: `${objectName}?.id`, todo: true });
+  }
+  props.push({ name: 'user_id', value: 'user?.id', todo: true });
+  if (gap.suggestedEvent.endsWith('_edited') && gap.includes?.length) {
+    props.push({
+      name: 'changes',
+      value: `[${gap.includes.map((c) => `'${c}'`).join(', ')}]`,
+      todo: false,
+    });
+  }
+  return props;
+}
+
+function normalizeObjectName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+}
+
+function findObjectVariable(scope: ScopeVariable[], objectName: string): ScopeVariable | null {
+  const target = normalizeObjectName(objectName);
+  const targetParts = target.split('_').filter(Boolean);
+
+  // Prefer exact match against common variants.
+  const exactNames = new Set<string>([
+    target,
+    targetParts[targetParts.length - 1] ?? target,
+  ]);
+
+  for (const v of scope) {
+    const vNorm = normalizeObjectName(v.name);
+    if (exactNames.has(vNorm)) return v;
+  }
+
+  // Next: match variables containing the object name token.
+  for (const v of scope) {
+    const vNorm = normalizeObjectName(v.name);
+    for (const part of targetParts) {
+      if (part.length >= 3 && vNorm === part) return v;
+    }
+  }
+
+  return null;
+}
+
+function findUserVariable(scope: ScopeVariable[]): ScopeVariable | null {
+  const candidates = new Set(['user', 'currentuser', 'session', 'me']);
+  for (const v of scope) {
+    const n = v.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    if (candidates.has(n)) return v;
+  }
+  // Often user comes from context hooks: const { user } = useContext(...)
+  const fromContext = scope.find((v) => v.source === 'useContext' && v.name.toLowerCase().includes('user'));
+  return fromContext ?? null;
 }

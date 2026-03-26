@@ -1,10 +1,10 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import chalk from 'chalk';
+import * as path from 'path';
 
 import type { DetectedEvent, ProductProfile } from '../lib/types';
 import type { TrackingGap } from '../lib/discovery/tracking-gap-detector';
 import type { SynthesizedEvent } from '../lib/pipeline/types';
+import type { TrackingPlanContext } from '../lib/types';
 import type { ConventionCoverage } from '../conventions';
 import { loadConventions, matchConventionsToCodebase, computeConventionCoverage, getConventionsDir } from '../conventions';
 import ora from 'ora';
@@ -13,14 +13,17 @@ import { loadCodebaseFiles } from '../lib/pipeline/01-load-files';
 import { runInventory } from '../lib/pipeline/02-inventory';
 import { analyzeProduct } from '../lib/pipeline/03-product-profile';
 import { detectInteractions } from '../lib/pipeline/04-detect-interactions';
+import { extractContext } from '../lib/pipeline/04b-extract-context';
 import { synthesizeEvents } from '../lib/pipeline/05-synthesize-events';
 import { findBestLocation } from '../lib/pipeline/06-find-locations';
 import { hashCodebase, readCache, writeCache } from '../lib/utils/cache';
+import { readLoglineConfig } from '../lib/utils/config';
 
 export interface ScanResult {
   profile: ProductProfile;
   events: DetectedEvent[];
   gaps: TrackingGap[];
+  context?: TrackingPlanContext;
   coverage: {
     tracked: number;
     missing: number;
@@ -29,38 +32,7 @@ export interface ScanResult {
   conventionCoverage?: ConventionCoverage[];
 }
 
-const SCAN_CACHE_VERSION = 5;
-
-interface LoglineConfig {
-  eventGranularity?: 'business' | 'granular';
-}
-
-function loadLoglineConfig(cwd: string): LoglineConfig {
-  const configPath = path.join(cwd, '.logline', 'config.json');
-  try {
-    const raw = fs.readFileSync(configPath, 'utf-8');
-    return (JSON.parse(raw) as LoglineConfig) ?? {};
-  } catch (err: any) {
-    // If config doesn't exist, proceed with defaults.
-    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return {};
-
-    // If it's invalid JSON, surface a helpful line number.
-    const msg = String(err?.message ?? '');
-    const posMatch = msg.match(/position\s+(\d+)/i);
-    if (posMatch) {
-      const pos = Number(posMatch[1]);
-      try {
-        const raw = fs.readFileSync(configPath, 'utf-8');
-        const prefix = raw.slice(0, pos);
-        const line = prefix.split('\n').length;
-        throw new Error(`Invalid config.json: JSON parse error at line ${line}`);
-      } catch {
-        // fall through to generic error
-      }
-    }
-    throw new Error(`Invalid config.json: ${msg || 'unable to parse JSON'}`);
-  }
-}
+const SCAN_CACHE_VERSION = 6;
 
 export async function scanCommand(options: {
   fast?: boolean;
@@ -71,6 +43,7 @@ export async function scanCommand(options: {
   cwd?: string;
 }): Promise<ScanResult> {
   const cwd = options.cwd ?? process.cwd();
+  const config = readLoglineConfig(cwd);
   const spinnersEnabled = !options.json;
 
   const fail = (message: string): never => {
@@ -82,7 +55,10 @@ export async function scanCommand(options: {
 
   // Stage 1: Load files
   const loadSpinner = spinnersEnabled ? ora('Loading codebase...').start() : null;
-  const files = await loadCodebaseFiles(cwd);
+  const files = await loadCodebaseFiles(cwd, {
+    include: config.scan.include,
+    exclude: config.scan.exclude,
+  });
   if (loadSpinner) loadSpinner.succeed(`Found ${files.length} files`);
   if (options.verbose && !options.json) {
     console.log('\n[Loaded files]');
@@ -98,7 +74,7 @@ export async function scanCommand(options: {
   // Cache check
   const cachePath = path.join(cwd, '.logline', 'cache', 'scan.json');
   const codebaseHash = hashCodebase(files);
-  const optionsKey = `fast=${Boolean(options.fast)};deep=${Boolean(options.deep)};granular=${Boolean(options.granular)}`;
+  const optionsKey = `fast=${Boolean(options.fast)};deep=${Boolean(options.deep)};granular=${Boolean(options.granular)};eventGranularity=${config.eventGranularity};include=${config.scan.include.join(',')};exclude=${config.scan.exclude.join(',')}`;
   const cached = readCache<ScanResult>(cachePath);
   if (
     cached &&
@@ -148,6 +124,11 @@ export async function scanCommand(options: {
     console.log();
   }
 
+  // Stage 04b: Extract context graph (actors/objects/lifecycles)
+  const contextSpinner = spinnersEnabled ? ora('Extracting product context...').start() : null;
+  const context = extractContext(files);
+  if (contextSpinner) contextSpinner.succeed(`Context: ${context.objects.length} objects, ${context.actors.length} actors`);
+
   // Stage 5: Synthesize events (temporary regex-based; Day 4 adds LLM)
   const synthSpinner = spinnersEnabled ? ora('Synthesizing business events...').start() : null;
   const synthesized = await synthesizeEvents(interactions, profile, {
@@ -181,6 +162,7 @@ export async function scanCommand(options: {
     profile,
     events: inventory.existingEvents,
     gaps,
+    context,
     coverage: calculateCoverage(inventory.existingEvents, gaps),
   });
 
@@ -230,6 +212,7 @@ function normalizeScanResult(r: Partial<ScanResult>): ScanResult {
     },
     events,
     gaps,
+    context: r.context,
     coverage: r.coverage ?? { tracked: events.length, missing: gaps.length, percentage: 0 },
   };
 }

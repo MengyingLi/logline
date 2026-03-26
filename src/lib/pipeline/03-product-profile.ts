@@ -6,6 +6,7 @@ export async function analyzeProduct(args: {
   files: FileContent[];
   existingEventNames: string[];
   entities: string[];
+  verbose?: boolean;
 }): Promise<ProductProfile> {
   if (!args.apiKey) {
     return {
@@ -28,5 +29,6 @@ export async function analyzeProduct(args: {
     codebaseSummary,
     existingEvents: args.existingEventNames,
     entities: args.entities,
+    verbose: Boolean(args.verbose),
   });
 }

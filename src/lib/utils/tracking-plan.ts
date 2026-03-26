@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import type { TrackingPlan, TrackingPlanEvent, CoverageStats, ProductProfile } from '../types';
+import type { TrackingPlan, TrackingPlanEvent, CoverageStats, ProductProfile, TrackingPlanContext } from '../types';
 
 const TRACKING_PLAN_FILENAME = 'tracking-plan.json';
 const TRACKING_PLAN_DIR = '.logline';
@@ -63,7 +63,8 @@ export function mergeTrackingPlan(
   existing: TrackingPlan | null,
   newEvents: TrackingPlanEvent[],
   product: ProductProfile,
-  coverage: CoverageStats
+  coverage: CoverageStats,
+  context?: TrackingPlanContext
 ): TrackingPlan {
   const now = new Date().toISOString();
 
@@ -74,6 +75,7 @@ export function mergeTrackingPlan(
       generatedBy: `logline@${getVersion()}`,
       product,
       events: newEvents,
+      context,
       coverage,
     };
   }
@@ -144,6 +146,7 @@ export function mergeTrackingPlan(
     generatedBy: `logline@${getVersion()}`,
     product,
     events: Array.from(merged.values()),
+    context: context ?? existing.context,
     coverage,
   };
 }

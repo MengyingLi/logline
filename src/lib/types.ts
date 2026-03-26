@@ -241,6 +241,19 @@ export interface ObjectToObjectRelationship {
   contextImplication: string;
 }
 
+export interface JoinPath {
+  from: string;
+  to: string;
+  via: string[];
+}
+
+export interface ExpectedSequence {
+  name: string;
+  steps: string[];
+  expectedWindow: string;
+  significance?: string;
+}
+
 export interface InteractionTypes {
   actorToObject: ActorToObjectInteraction[];
   actorToActor: ActorToActorInteraction[];
@@ -495,6 +508,8 @@ export interface TrackingPlanContext {
   objects: TrackedObject[];
   relationships: ObjectToObjectRelationship[];
   lifecycles: ObjectLifecycle[];
+  joinPaths?: JoinPath[];
+  expectedSequences?: ExpectedSequence[];
 }
 
 export interface TrackingPlanMetric {

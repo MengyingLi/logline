@@ -33,6 +33,9 @@ export function detectInteractions(files: FileContent[]): RawInteraction[] {
     interactions.push(...detectHandlerDeclarations(file, content, lines));
     interactions.push(...detectRouteHandlers(file, content, lines));
     interactions.push(...detectMutations(file, content, lines));
+    interactions.push(...detectServerActions(file, content, lines));
+    interactions.push(...detectTRPCMutationsAndQueries(file, content, lines));
+    interactions.push(...detectReduxDispatches(file, content, lines));
     interactions.push(...detectToggles(file, content, lines));
   }
 
@@ -320,6 +323,129 @@ function detectToggles(file: FileContent, content: string, lines: string[]): Raw
   }
 
   return results;
+}
+
+function detectServerActions(file: FileContent, content: string, lines: string[]): RawInteraction[] {
+  if (!/(['\"])use server\1/.test(content)) return [];
+
+  const results: RawInteraction[] = [];
+  const pattern = /export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(content)) !== null) {
+    const fn = m[1];
+    const { line, context } = buildContext(content, m.index, lines);
+    results.push({
+      type: 'lifecycle',
+      file: file.path,
+      line,
+      functionName: fn,
+      codeContext: context,
+      relatedEntities: [...extractEntitiesFromName(fn), ...extractEntitiesFromFilePath(file.path)].filter((v, i, arr) => arr.indexOf(v) === i),
+      triggerExpression: `serverAction(${fn})`,
+      confidence: 0.6,
+    });
+  }
+  return results;
+}
+
+function detectTRPCMutationsAndQueries(file: FileContent, content: string, lines: string[]): RawInteraction[] {
+  const results: RawInteraction[] = [];
+
+  // Server-side: { workflow: publicProcedure.mutation(...)} or { workflow: ...query(...)}
+  const keyProcPattern = /([A-Za-z0-9_]+)\s*:\s*[^;]*?\.(mutation|query)\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = keyProcPattern.exec(content)) !== null) {
+    const key = m[1];
+    const op = m[2].toLowerCase();
+    const { line, context } = buildContext(content, m.index, lines);
+
+    const verb = guessLikelyVerbFromContext(context, op === 'mutation' ? 'mutation' : 'query');
+    const objectPascal = toPascalCase(key.replace(/[-_]/g, ' '));
+    const functionName = `${toPascalCase(verb)}${objectPascal}`;
+
+    results.push({
+      type: op === 'mutation' ? 'lifecycle' : 'state_change',
+      file: file.path,
+      line,
+      functionName,
+      codeContext: context,
+      relatedEntities: [...extractEntitiesFromName(functionName), ...extractEntitiesFromFilePath(file.path)].filter((v, i, arr) => arr.indexOf(v) === i),
+      triggerExpression: `${op}(${key})`,
+      confidence: op === 'mutation' ? 0.65 : 0.45,
+    });
+  }
+
+  // Client-side hooks: something.useMutation(...)
+  const hookPattern = /\.use(Mutation|Query)\s*(?:<[^>]+>)?\s*\(/g;
+  while ((m = hookPattern.exec(content)) !== null) {
+    const { line, context } = buildContext(content, m.index, lines);
+    const op = String(m[1] ?? '').toLowerCase();
+    const verb = op === 'query' ? 'select' : 'create';
+    const objectFromPath = extractEntitiesFromFilePath(file.path)[0] ?? 'item';
+    const objectPascal = toPascalCase(objectFromPath.replace(/[-_]/g, ' '));
+    const functionName = `${toPascalCase(verb)}${objectPascal}`;
+
+    results.push({
+      type: 'lifecycle',
+      file: file.path,
+      line,
+      functionName,
+      codeContext: context,
+      relatedEntities: [...extractEntitiesFromName(functionName)].filter((v, i, arr) => arr.indexOf(v) === i),
+      triggerExpression: `trpc.${op}()`,
+      confidence: op === 'query' ? 0.4 : 0.6,
+    });
+  }
+
+  return results;
+}
+
+function detectReduxDispatches(file: FileContent, content: string, lines: string[]): RawInteraction[] {
+  const results: RawInteraction[] = [];
+
+  // dispatch(createWorkflow(...))
+  const pattern = /\bdispatch\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(content)) !== null) {
+    const actionCreator = m[1];
+    const { line, context } = buildContext(content, m.index, lines);
+    results.push({
+      type: 'state_change',
+      file: file.path,
+      line,
+      functionName: actionCreator,
+      codeContext: context,
+      relatedEntities: [...extractEntitiesFromName(actionCreator), ...extractEntitiesFromFilePath(file.path)].filter((v, i, arr) => arr.indexOf(v) === i),
+      triggerExpression: `dispatch(${actionCreator}(`,
+      confidence: 0.55,
+    });
+  }
+
+  return results;
+}
+
+function guessLikelyVerbFromContext(context: string, mode: 'mutation' | 'query'): string {
+  const lower = context.toLowerCase();
+  const order: Array<[RegExp, string]> = [
+    [/delete|remove/, 'delete'],
+    [/update|edit/, 'update'],
+    [/create|add|insert|new|save/, 'create'],
+    [/toggle|enable/, 'toggle'],
+    [/disable/, 'disable'],
+    [/select|fetch|load|get/, 'select'],
+  ];
+  for (const [rx, verb] of order) {
+    if (rx.test(lower)) return verb;
+  }
+  return mode === 'query' ? 'select' : 'create';
+}
+
+function toPascalCase(s: string): string {
+  return s
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join('');
 }
 
 // ─── Deduplication ───

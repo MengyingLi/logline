@@ -3,8 +3,8 @@
  * Adapted from logline_old/packages/agent-core/src/reasoning/business-reasoner.ts
  */
 
-import OpenAI from 'openai';
 import type { FileContent, ProductProfile } from '../types';
+import { llmCall } from '../utils/llm';
 
 export interface ICodeIndexer {
   search(
@@ -24,11 +24,11 @@ export interface BusinessReasonerConfig {
 }
 
 export class BusinessReasoner {
-  private client: OpenAI;
+  private apiKey: string;
   private model: string;
 
   constructor(config: BusinessReasonerConfig) {
-    this.client = new OpenAI({ apiKey: config.apiKey });
+    this.apiKey = config.apiKey;
     this.model = config.model || 'gpt-4o-mini';
   }
 
@@ -39,6 +39,7 @@ export class BusinessReasoner {
     existingEvents?: string[];
     entities?: string[];
     codeIndexer?: ICodeIndexer;
+    verbose?: boolean;
   }): Promise<ProductProfile> {
     try {
       if (context.codeIndexer && !context.codebaseSummary) {
@@ -50,24 +51,16 @@ export class BusinessReasoner {
       }
 
       const prompt = this.buildAnalysisPrompt(context);
-      const response = await this.client.chat.completions.create({
+      const parsed = await llmCall<Partial<ProductProfile>>({
+        apiKey: this.apiKey,
+        system:
+          "You are an expert product analyst. Analyze the provided information to understand the product's mission, business goals, and key metrics. Return only valid JSON.",
+        prompt,
         model: this.model,
-        messages: [
-          {
-            role: 'system',
-            content:
-              "You are an expert product analyst. Analyze the provided information to understand the product's mission, business goals, and key metrics. Return only valid JSON.",
-          },
-          { role: 'user', content: prompt },
-        ],
         temperature: 0.3,
-        response_format: { type: 'json_object' },
+        verbose: Boolean(context.verbose),
+        fallback: {},
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) throw new Error('No response from OpenAI');
-
-      const parsed = JSON.parse(content) as Partial<ProductProfile>;
       return {
         mission: parsed.mission || 'Not specified',
         valueProposition: parsed.valueProposition || 'Not specified',

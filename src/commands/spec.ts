@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { scanCommand } from './scan';
 import type { TrackingPlanEvent, EventProperty, CoverageStats } from '../lib/types';
 import type { TrackingGap } from '../lib/discovery/tracking-gap-detector';
+import { generateExpectedSequences } from '../lib/context/expected-sequence';
 import {
   generateEventId,
   getTrackingPlanPath,
@@ -29,7 +30,10 @@ export async function specCommand(options: { cwd?: string }): Promise<void> {
     fs.rmSync(oldSpecsDir, { recursive: true, force: true });
   }
 
-  const scanResult = await scanCommand({ cwd });
+  const scanResult = await scanCommand({
+    cwd,
+    fast: !process.env.OPENAI_API_KEY,
+  });
   const now = new Date().toISOString();
 
   // Convert gaps → TrackingPlanEvent[] with status 'suggested'
@@ -68,7 +72,17 @@ export async function specCommand(options: { cwd?: string }): Promise<void> {
   // Compute summary stats before merge
   const stats = computeMergeStats(existing?.events ?? [], newEvents);
 
-  const merged = mergeTrackingPlan(existing, newEvents, scanResult.profile, coverage);
+  const contextWithSequences = scanResult.context
+    ? {
+        ...scanResult.context,
+        expectedSequences: generateExpectedSequences({
+          events: newEvents,
+          lifecycles: scanResult.context.lifecycles ?? [],
+        }),
+      }
+    : undefined;
+
+  const merged = mergeTrackingPlan(existing, newEvents, scanResult.profile, coverage, contextWithSequences);
 
   // Update coverage on merged plan (recalculate from merged events)
   merged.coverage = computeCoverage(merged.events);
