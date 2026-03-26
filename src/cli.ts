@@ -6,6 +6,9 @@ import { initCommand } from './commands/init';
 import { scanCommand } from './commands/scan';
 import { specCommand } from './commands/spec';
 import { prCommand } from './commands/pr';
+import { statusCommand } from './commands/status';
+import { approveCommand } from './commands/approve';
+import { rejectCommand } from './commands/reject';
 
 const program = new Command();
 
@@ -25,14 +28,23 @@ program
   .option('--fast', 'Skip LLM product reasoning')
   .option('--deep', 'Use deeper (slower) analysis where available')
   .option('--granular', 'Show all granular interactions (no business-event grouping)')
+  .option('--verbose', 'Verbose output (files, interactions, LLM previews)')
+  .option('--json', 'Output scan results as JSON to stdout (no colors/spinners)')
   .action(async (opts) => {
-    console.log(chalk.bold('\n🔬 Analyzing your product...\n'));
+    if (!opts.json) console.log(chalk.bold('\n🔬 Analyzing your product...\n'));
 
     const result = await scanCommand({
       fast: Boolean(opts.fast),
       deep: Boolean(opts.deep),
       granular: Boolean(opts.granular),
+      verbose: Boolean(opts.verbose),
+      json: Boolean(opts.json),
     });
+    if (opts.json) {
+      process.stdout.write(JSON.stringify(result));
+      process.stdout.write('\n');
+      return;
+    }
     printScanResult(result);
   });
 
@@ -54,6 +66,40 @@ program
       dryRun: opts.dryRun,
       title: opts.title,
       baseBranch: opts.base,
+    });
+  });
+
+program
+  .command('status')
+  .description('Show tracking plan summary (no rescan)')
+  .option('--cwd <cwd>', 'Working directory')
+  .action(async (opts) => {
+    await statusCommand({ cwd: opts.cwd ? String(opts.cwd) : undefined });
+  });
+
+program
+  .command('approve [eventName]')
+  .description('Mark a suggested/approved event as approved')
+  .option('--cwd <cwd>', 'Working directory')
+  .option('--all', 'Approve all suggested events')
+  .action(async (eventName: string | undefined, opts: any) => {
+    await approveCommand({
+      cwd: opts.cwd ? String(opts.cwd) : undefined,
+      eventName: eventName ? String(eventName) : undefined,
+      all: Boolean(opts.all),
+    });
+  });
+
+program
+  .command('reject [eventName]')
+  .description('Mark an event as deprecated')
+  .option('--cwd <cwd>', 'Working directory')
+  .option('--all', 'Deprecate all suggested/approved events')
+  .action(async (eventName: string | undefined, opts: any) => {
+    await rejectCommand({
+      cwd: opts.cwd ? String(opts.cwd) : undefined,
+      eventName: eventName ? String(eventName) : undefined,
+      all: Boolean(opts.all),
     });
   });
 
