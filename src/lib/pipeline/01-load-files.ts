@@ -3,9 +3,23 @@ import * as path from 'path';
 import { glob } from 'glob';
 import type { FileContent } from '../types';
 
-export async function loadCodebaseFiles(rootDir: string): Promise<FileContent[]> {
-  const patterns = ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.md', '**/package.json'];
-  const ignore = ['**/node_modules/**', '**/.next/**', '**/dist/**', '**/build/**', '**/.git/**', '**/coverage/**'];
+export async function loadCodebaseFiles(
+  rootDir: string,
+  options?: { include?: string[]; exclude?: string[] }
+): Promise<FileContent[]> {
+  const patterns =
+    options?.include && options.include.length > 0
+      ? options.include
+      : ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx', '**/*.md', '**/package.json'];
+  const ignore = [
+    '**/node_modules/**',
+    '**/.next/**',
+    '**/dist/**',
+    '**/build/**',
+    '**/.git/**',
+    '**/coverage/**',
+    ...(options?.exclude ?? []),
+  ];
 
   const fileSet = new Set<string>();
   for (const pat of patterns) {

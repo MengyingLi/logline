@@ -9,6 +9,8 @@ import { prCommand } from './commands/pr';
 import { statusCommand } from './commands/status';
 import { approveCommand } from './commands/approve';
 import { rejectCommand } from './commands/reject';
+import { metricsCommand } from './commands/metrics';
+import { contextCommand } from './commands/context';
 
 const program = new Command();
 
@@ -100,6 +102,35 @@ program
       cwd: opts.cwd ? String(opts.cwd) : undefined,
       eventName: eventName ? String(eventName) : undefined,
       all: Boolean(opts.all),
+    });
+  });
+
+program
+  .command('metrics')
+  .description('Generate metrics from tracking plan context')
+  .option('--cwd <cwd>', 'Working directory')
+  .option('--format <format>', 'Output format: json | yaml')
+  .action(async (opts) => {
+    const format =
+      opts.format === 'json' || opts.format === 'yaml' ? (opts.format as 'json' | 'yaml') : undefined;
+    await metricsCommand({ cwd: opts.cwd ? String(opts.cwd) : undefined, format });
+  });
+
+program
+  .command('context')
+  .description('Show agent-readable product ontology from tracking plan')
+  .option('--cwd <cwd>', 'Working directory')
+  .option('--format <format>', 'Output format: text | mermaid | json')
+  .option('--json', 'Output JSON (same as --format json)')
+  .action(async (opts) => {
+    const format =
+      opts.format === 'text' || opts.format === 'mermaid' || opts.format === 'json'
+        ? (opts.format as 'text' | 'mermaid' | 'json')
+        : undefined;
+    await contextCommand({
+      cwd: opts.cwd ? String(opts.cwd) : undefined,
+      format,
+      json: Boolean(opts.json),
     });
   });
 

@@ -8,17 +8,25 @@
   "scripts": {
     "build": "tsc",
     "dev:scan": "tsx src/cli.ts scan",
+    "test": "node --test",
     "start": "node dist/cli.js"
   },
   "dependencies": {
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
     "glob": "^11.0.3",
-    "openai": "^4.80.0"
+    "js-yaml": "^4.1.1",
+    "openai": "^4.80.0",
+    "ora": "^9.3.0"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.13.1",
     "tsx": "^4.19.2",
     "typescript": "^5.9.3"
-  }
+  },
+  "files": [
+    "dist",
+    "conventions"
+  ]
 }

@@ -14,15 +14,23 @@ Your Code → Logline → Analytics Events PR
 
 ## Quick Start
 
-```bash
-# Install
-npm install -g logline
+> **Important:** Do **not** run `npm install -g logline`. That installs a different package from npm (a logging library) with no CLI. Install from this repo instead.
 
-# Set your OpenAI API key (for smart event detection)
+```bash
+# 1. Clone and install the CLI from this repo
+git clone https://github.com/MengyingLi/logline
+cd logline
+npm install
+npm run build
+npm install -g .
+
+# If you get permission errors: sudo npm install -g .
+
+# 2. Set your OpenAI API key (for smart event detection)
 export OPENAI_API_KEY=sk-...
 
-# Scan your project
-cd your-project
+# 3. Run in your project
+cd /path/to/your-project
 logline scan
 
 # Preview changes
@@ -31,6 +39,8 @@ logline pr --dry-run
 # Create the PR
 logline pr
 ```
+
+**If you already ran `npm install -g logline`:** Uninstall it with `npm uninstall -g logline`, then run `npm install -g .` from inside the cloned logline repo.
 
 ## Example Output
 
@@ -151,27 +161,40 @@ export function track(eventName: string, properties: Record<string, unknown>): v
 }
 ```
 
-## Event Spec Format
+## Tracking Plan
 
-Generated specs in `.logline/specs/`:
+`logline spec` generates a single `.logline/tracking-plan.json` with all events:
 
 ```json
 {
-  "eventName": "workflow_edited",
-  "description": "User modified their workflow",
-  "actor": "User",
-  "object": "Workflow",
-  "properties": [
-    { "name": "workflow_id", "type": "string", "required": true },
-    { "name": "user_id", "type": "string", "required": true },
-    { "name": "changes", "type": "array", "required": false }
+  "$schema": "https://logline.dev/schema/tracking-plan.json",
+  "version": "1.0.0",
+  "generatedAt": "2026-01-29T23:45:09.642Z",
+  "product": {
+    "mission": "Workflow automation for teams",
+    "keyMetrics": ["workflows_created", "workflow_executions"]
+  },
+  "events": [
+    {
+      "name": "workflow_edited",
+      "description": "User modified their workflow",
+      "actor": "User",
+      "object": "Workflow",
+      "action": "edited",
+      "priority": "high",
+      "properties": [
+        { "name": "workflow_id", "type": "string", "required": true },
+        { "name": "user_id", "type": "string", "required": true },
+        { "name": "changes", "type": "array", "required": false }
+      ],
+      "location": { "file": "src/components/StepConfigPanel.tsx", "line": 25 }
+    }
   ],
-  "suggestedLocations": [
-    { "file": "src/components/StepConfigPanel.tsx", "line": 25 }
-  ],
-  "priority": "high"
+  "trackedEvents": [{ "name": "workflow_created", "locations": [] }]
 }
 ```
+
+`logline pr` uses this file when present, so you can run `logline spec` once and then `logline pr` without re-scanning.
 
 ## Development
 
@@ -202,6 +225,10 @@ logline scan
 - GitHub CLI `gh` (optional, for auto PR creation)
 
 ## FAQ
+
+**Q: I get "command not found: logline" after installing.**
+
+You likely ran `npm install -g logline`, which installs a different npm package (a logging library), not this CLI. Install from the repo instead: clone this repo, then run `npm install`, `npm run build`, and `npm install -g .` from inside the logline directory. See [Quick Start](#quick-start) above.
 
 **Q: Does it work without OpenAI?**
 
