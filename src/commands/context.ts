@@ -45,7 +45,10 @@ function buildHumanReadable(plan: TrackingPlan): string {
   lines.push(chalk.bold('Actors:'));
   if (ctx.actors?.length) {
     for (const a of ctx.actors) {
-      lines.push(`  ${a.name} (${a.identifierPattern}) — ${a.detectedFrom}`);
+      const actions = a.canPerformActions?.length
+        ? a.canPerformActions.join(', ')
+        : a.detectedFrom;
+      lines.push(`  ${a.name} (${a.identifierPattern}) — ${actions}`);
     }
   } else {
     lines.push(chalk.dim('  (none detected)'));
@@ -92,13 +95,37 @@ function buildHumanReadable(plan: TrackingPlan): string {
 
   lines.push(chalk.bold('Metrics Enabled:'));
   if (plan.metrics?.length) {
-    for (const m of plan.metrics.slice(0, 12)) {
-      lines.push(`  ✓ ${m.name.padEnd(28)} (${m.category}, ${m.grain})`);
+    const implementedNames = new Set(
+      (plan.events ?? []).filter((e) => e.status === 'implemented').map((e) => e.name)
+    );
+    const enabled = plan.metrics.filter((m) => m.events.every((n) => implementedNames.has(n)));
+    const blocked = plan.metrics.filter((m) => !m.events.every((n) => implementedNames.has(n)));
+
+    for (const m of enabled.slice(0, 8)) {
+      const from = m.events.length ? `from ${m.events.join(' + ')}` : m.category;
+      lines.push(`  ${chalk.green('✓')} ${m.name.padEnd(28)} (${from})`);
     }
-    if (plan.metrics.length > 12) lines.push(chalk.dim(`  ... and ${plan.metrics.length - 12} more`));
+    if (enabled.length > 8) lines.push(chalk.dim(`  ... and ${enabled.length - 8} more enabled`));
+
+    for (const m of blocked.slice(0, 5)) {
+      const missing = m.events.find((n) => !implementedNames.has(n));
+      lines.push(`  ${chalk.yellow('✗')} ${m.name.padEnd(28)} ${chalk.dim(`(needs: ${missing} event — not yet tracked)`)}`);
+    }
+    if (blocked.length > 5) lines.push(chalk.dim(`  ... and ${blocked.length - 5} more unavailable`));
+
+    if (plan.metrics.length === 0) {
+      lines.push(chalk.dim('  (none — run `logline metrics`)'));
+    }
   } else {
     lines.push(chalk.dim('  (none — run `logline metrics`)'));
   }
+
+  lines.push('');
+  lines.push(chalk.bold('Agent Integration:'));
+  lines.push(chalk.dim('  This tracking plan is machine-readable. An agent can consume'));
+  lines.push(chalk.dim('  .logline/tracking-plan.json to understand your product\'s data model,'));
+  lines.push(chalk.dim('  correlate events, detect anomalies in expected sequences, and'));
+  lines.push(chalk.dim('  compute metrics — without any prior knowledge of your product.'));
 
   return lines.join('\n');
 }
@@ -118,6 +145,19 @@ function buildMermaid(plan: TrackingPlan): string {
   for (const o of ctx.objects ?? []) {
     lines.push(`  ${sanitizeNode(o.name)}[${o.name}]`);
   }
+
+  // Actor→object edges derived from implemented/approved events
+  const actorObjectEdges = new Set<string>();
+  for (const e of plan.events ?? []) {
+    if (!e.actor || !e.object || e.status === 'deprecated') continue;
+    const key = `${e.actor}|${e.action}|${e.object}`;
+    if (!actorObjectEdges.has(key)) {
+      actorObjectEdges.add(key);
+      lines.push(`  ${sanitizeNode(e.actor)} -->|${e.action}| ${sanitizeNode(e.object)}`);
+    }
+  }
+
+  // Object→object relationships
   for (const r of ctx.relationships ?? []) {
     lines.push(`  ${sanitizeNode(r.parent)} -->|${r.relationship}| ${sanitizeNode(r.child)}`);
   }
