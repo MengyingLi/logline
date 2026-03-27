@@ -11,6 +11,7 @@ import { approveCommand } from './commands/approve';
 import { rejectCommand } from './commands/reject';
 import { metricsCommand } from './commands/metrics';
 import { contextCommand } from './commands/context';
+import { exportCommand } from './commands/export';
 
 const program = new Command();
 
@@ -131,6 +132,21 @@ program
       cwd: opts.cwd ? String(opts.cwd) : undefined,
       format,
       json: Boolean(opts.json),
+    });
+  });
+
+program
+  .command('export')
+  .description('Export tracking plan to external tool formats')
+  .option('--format <format>', 'Output format: segment | amplitude | opentelemetry | glassflow', 'segment')
+  .option('--output <path>', 'Output file path (default: <format>-tracking-plan.json)')
+  .option('--cwd <cwd>', 'Working directory')
+  .action(async (opts) => {
+    const format = opts.format as 'segment' | 'amplitude' | 'opentelemetry' | 'glassflow';
+    await exportCommand({
+      cwd: opts.cwd ? String(opts.cwd) : undefined,
+      format,
+      output: opts.output ? String(opts.output) : undefined,
     });
   });
 
