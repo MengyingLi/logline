@@ -1,0 +1,216 @@
+{
+  "version": "1.0",
+  "generatedAt": "2026-03-27T00:00:00.000Z",
+  "generatedBy": "logline@0.1.0",
+  "product": {
+    "mission": "Workflow automation for teams",
+    "valueProposition": "Build, test, and deploy automated workflows without code",
+    "businessGoals": ["increase workflow activation", "reduce time-to-first-run", "improve retention"],
+    "userPersonas": ["developer", "ops engineer", "product manager"],
+    "keyMetrics": ["workflows_created", "workflow_completion_rate", "steps_configured"],
+    "confidence": 0.87
+  },
+  "events": [
+    {
+      "id": "evt_1a2b3c4d",
+      "name": "workflow_created",
+      "description": "User created a new workflow",
+      "actor": "User",
+      "object": "Workflow",
+      "action": "created",
+      "priority": "critical",
+      "status": "suggested",
+      "properties": [
+        { "name": "workflow_id",   "type": "string", "required": true,  "description": "Unique identifier of the workflow" },
+        { "name": "user_id",       "type": "string", "required": true,  "description": "ID of the user who performed the action" },
+        { "name": "template_used", "type": "string", "required": false, "description": "Template the workflow was created from, if any" }
+      ],
+      "locations": [{ "file": "src/pages/NewWorkflow.tsx", "line": 42, "confidence": 0.9 }],
+      "firstSeen": "2026-03-27T00:00:00.000Z",
+      "lastSeen": "2026-03-27T00:00:00.000Z"
+    },
+    {
+      "id": "evt_5e6f7a8b",
+      "name": "step_configured",
+      "description": "User configured a step in their workflow",
+      "actor": "User",
+      "object": "Step",
+      "action": "configured",
+      "priority": "high",
+      "status": "suggested",
+      "properties": [
+        { "name": "step_id",     "type": "string", "required": true,  "description": "Unique identifier of the step" },
+        { "name": "workflow_id", "type": "string", "required": true,  "description": "ID of the parent Workflow", "todo": true },
+        { "name": "user_id",     "type": "string", "required": true,  "description": "ID of the user who performed the action" },
+        { "name": "step_type",   "type": "string", "required": false, "description": "Type of step (trigger, action, condition)" }
+      ],
+      "locations": [{ "file": "src/components/StepConfigPanel.tsx", "line": 25, "confidence": 0.85 }],
+      "includes": ["mapping_added", "trigger_selected", "action_configured"],
+      "firstSeen": "2026-03-27T00:00:00.000Z",
+      "lastSeen": "2026-03-27T00:00:00.000Z"
+    },
+    {
+      "id": "evt_9c0d1e2f",
+      "name": "workflow_completed",
+      "description": "A workflow run finished successfully",
+      "actor": "System",
+      "object": "Workflow",
+      "action": "completed",
+      "priority": "critical",
+      "status": "suggested",
+      "properties": [
+        { "name": "workflow_id",       "type": "string", "required": true,  "description": "Unique identifier of the workflow" },
+        { "name": "user_id",           "type": "string", "required": true,  "description": "ID of the user who owns the workflow" },
+        { "name": "time_to_complete_ms", "type": "number", "required": false, "description": "Milliseconds from creation to completion", "todo": true },
+        { "name": "steps_executed",    "type": "number", "required": false, "description": "Number of steps that ran" }
+      ],
+      "locations": [{ "file": "src/components/WorkflowRunner.tsx", "line": 88, "confidence": 0.8 }],
+      "firstSeen": "2026-03-27T00:00:00.000Z",
+      "lastSeen": "2026-03-27T00:00:00.000Z"
+    },
+    {
+      "id": "evt_3g4h5i6j",
+      "name": "workflow_edited",
+      "description": "User modified their workflow configuration",
+      "actor": "User",
+      "object": "Workflow",
+      "action": "edited",
+      "priority": "high",
+      "status": "implemented",
+      "properties": [
+        { "name": "workflow_id", "type": "string", "required": true },
+        { "name": "user_id",     "type": "string", "required": true },
+        { "name": "changes",     "type": "object", "required": false, "description": "What was modified" }
+      ],
+      "locations": [{ "file": "src/components/StepConfigPanel.tsx", "line": 103 }],
+      "firstSeen": "2026-03-27T00:00:00.000Z",
+      "lastSeen": "2026-03-27T00:00:00.000Z"
+    }
+  ],
+  "context": {
+    "actors": [
+      {
+        "name": "User",
+        "type": "user",
+        "source": "inferred",
+        "identifierPattern": "user.id",
+        "canPerformActions": [],
+        "detectedFrom": "auth/session usage",
+        "confidence": 0.7
+      },
+      {
+        "name": "System",
+        "type": "system",
+        "source": "inferred",
+        "identifierPattern": "system",
+        "canPerformActions": [],
+        "detectedFrom": "cron/scheduler patterns",
+        "confidence": 0.5
+      }
+    ],
+    "objects": [
+      {
+        "name": "Workflow",
+        "source": "prisma",
+        "properties": ["id"],
+        "belongsTo": [],
+        "exposedViaAPI": true,
+        "confidence": 0.9,
+        "needsReview": false
+      },
+      {
+        "name": "Step",
+        "source": "prisma",
+        "properties": ["id"],
+        "belongsTo": ["Workflow"],
+        "exposedViaAPI": true,
+        "confidence": 0.85,
+        "needsReview": false
+      },
+      {
+        "name": "Mapping",
+        "source": "prisma",
+        "properties": ["id"],
+        "belongsTo": ["Step"],
+        "exposedViaAPI": false,
+        "confidence": 0.7,
+        "needsReview": true
+      }
+    ],
+    "relationships": [
+      {
+        "child": "Step",
+        "parent": "Workflow",
+        "relationship": "belongs_to",
+        "contextImplication": "Detected foreign-key field workflowId in src/api/steps.ts"
+      },
+      {
+        "child": "Mapping",
+        "parent": "Step",
+        "relationship": "belongs_to",
+        "contextImplication": "Detected foreign-key field stepId in src/api/mappings.ts"
+      }
+    ],
+    "lifecycles": [
+      {
+        "object": "Workflow",
+        "states": ["draft", "active", "completed"],
+        "transitions": []
+      }
+    ],
+    "joinPaths": [
+      {
+        "from": "Step",
+        "to": "Workflow",
+        "via": ["Step.workflow_id → Workflow.id"]
+      },
+      {
+        "from": "Mapping",
+        "to": "Step",
+        "via": ["Mapping.step_id → Step.id"]
+      },
+      {
+        "from": "Mapping",
+        "to": "Workflow",
+        "via": ["Mapping.step_id → Step.id", "Step.workflow_id → Workflow.id"]
+      }
+    ],
+    "expectedSequences": [
+      {
+        "name": "workflow_activation",
+        "steps": ["workflow_created", "workflow_edited", "workflow_completed"],
+        "expectedWindow": "7d",
+        "significance": "Measures whether users activate after creating a workflow"
+      }
+    ]
+  },
+  "metrics": [
+    {
+      "id": "m_a1b2c3d4",
+      "name": "workflow_created_count",
+      "description": "Count of workflow_created",
+      "formula": "count(event = 'workflow_created')",
+      "events": ["workflow_created"],
+      "category": "activation",
+      "grain": "daily",
+      "status": "suggested"
+    },
+    {
+      "id": "m_e5f6g7h8",
+      "name": "workflow_completion_rate",
+      "description": "Share of Workflows created that reach completed",
+      "formula": "count(event = 'workflow_completed') / nullif(count(event = 'workflow_created'), 0)",
+      "events": ["workflow_created", "workflow_completed"],
+      "category": "activation",
+      "grain": "weekly",
+      "status": "suggested"
+    }
+  ],
+  "coverage": {
+    "tracked": 1,
+    "suggested": 3,
+    "approved": 0,
+    "implemented": 1,
+    "percentage": 25
+  }
+}
