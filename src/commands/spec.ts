@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import chalk from 'chalk';
 import { scanCommand } from './scan';
-import type { TrackingPlanEvent, EventProperty, CoverageStats } from '../lib/types';
+import type { TrackingPlanEvent, EventProperty, CoverageStats, TrackingPlanContext, ObjectToObjectRelationship, JoinPath } from '../lib/types';
 import type { TrackingGap } from '../lib/discovery/tracking-gap-detector';
 import { generateExpectedSequences } from '../lib/context/expected-sequence';
 import {
@@ -19,6 +19,7 @@ interface PropertySpec {
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';
   required: boolean;
   description?: string;
+  todo?: boolean;
 }
 
 export async function specCommand(options: { cwd?: string }): Promise<void> {
@@ -38,7 +39,7 @@ export async function specCommand(options: { cwd?: string }): Promise<void> {
 
   // Convert gaps → TrackingPlanEvent[] with status 'suggested'
   const suggestedEvents: TrackingPlanEvent[] = scanResult.gaps.map((gap) =>
-    gapToEvent(gap, now)
+    gapToEvent(gap, now, scanResult.context)
   );
 
   // Convert detected events → TrackingPlanEvent[] with status 'implemented'
@@ -117,13 +118,13 @@ export async function specCommand(options: { cwd?: string }): Promise<void> {
   console.log(chalk.dim('Run `logline pr --dry-run` to preview instrumentation for suggested events.'));
 }
 
-function gapToEvent(gap: TrackingGap, now: string): TrackingPlanEvent {
+function gapToEvent(gap: TrackingGap, now: string, context?: TrackingPlanContext): TrackingPlanEvent {
   const parts = gap.suggestedEvent.split('_');
   const action = parts.pop() ?? 'unknown';
   const objectSnake = parts.join('_') || 'unknown';
   const objectPascal = toPascalCase(objectSnake);
 
-  const properties = inferProperties(objectSnake, gap);
+  const properties = inferProperties(objectSnake, gap, context);
 
   return {
     id: generateEventId(gap.suggestedEvent),
@@ -138,6 +139,7 @@ function gapToEvent(gap: TrackingGap, now: string): TrackingPlanEvent {
       type: (p.type === 'array' ? 'object' : p.type) as EventProperty['type'],
       required: p.required,
       description: p.description,
+      todo: p.todo,
     })),
     locations: gap.location ? [gap.location] : [],
     priority: gap.priority ?? 'medium',
@@ -155,15 +157,23 @@ function toPascalCase(s: string): string {
     .join('');
 }
 
-function inferProperties(object: string, gap: TrackingGap): PropertySpec[] {
+function inferProperties(object: string, gap: TrackingGap, context?: TrackingPlanContext): PropertySpec[] {
   const props: PropertySpec[] = [];
 
-  props.push({
-    name: `${object}_id`,
-    type: 'string',
-    required: true,
-    description: `Unique identifier of the ${object}`,
-  });
+  if (object !== 'unknown') {
+    props.push({
+      name: `${object}_id`,
+      type: 'string',
+      required: true,
+      description: `Unique identifier of the ${object}`,
+    });
+  }
+
+  // Context-aware hierarchy enrichment: add parent/grandparent IDs from relationships
+  if (context) {
+    const parentProps = buildContextProps(object, gap.suggestedEvent, context);
+    props.push(...parentProps);
+  }
 
   props.push({
     name: 'user_id',
@@ -171,10 +181,6 @@ function inferProperties(object: string, gap: TrackingGap): PropertySpec[] {
     required: true,
     description: 'ID of the user who performed the action',
   });
-
-  if (object.includes('workflow')) {
-    props.push({ name: 'workflow_name', type: 'string', required: false });
-  }
 
   if (gap.suggestedEvent.endsWith('_edited') && gap.includes?.length) {
     props.push({
@@ -185,7 +191,98 @@ function inferProperties(object: string, gap: TrackingGap): PropertySpec[] {
     });
   }
 
+  // Sequence-aware properties
+  if (gap.suggestedEvent.endsWith('_completed') && context?.lifecycles?.length) {
+    const objectSnake = gap.suggestedEvent.replace(/_completed$/, '');
+    const hasLifecycle = context.lifecycles.some((lc) => toSnake(lc.object) === objectSnake);
+    if (hasLifecycle) {
+      props.push({
+        name: 'time_to_complete_ms',
+        type: 'number',
+        required: false,
+        description: 'Milliseconds from creation to completion (for funnel analysis)',
+        todo: true,
+      });
+    }
+  }
+
+  if (gap.suggestedEvent.endsWith('_failed') && context?.expectedSequences?.length) {
+    const base = gap.suggestedEvent.replace(/_failed$/, '');
+    const inSequence = context.expectedSequences.some((s) => s.steps.includes(`${base}_tested`));
+    if (inSequence) {
+      props.push({
+        name: 'attempt_number',
+        type: 'number',
+        required: false,
+        description: 'How many times this action was attempted before failing',
+        todo: true,
+      });
+    }
+  }
+
+  // De-dup
+  const seen = new Set<string>();
+  return props.filter((p) => {
+    if (seen.has(p.name)) return false;
+    seen.add(p.name);
+    return true;
+  });
+}
+
+function buildContextProps(
+  objectSnake: string,
+  _eventName: string,
+  context: TrackingPlanContext
+): PropertySpec[] {
+  const props: PropertySpec[] = [];
+  const relationships = context.relationships ?? [];
+  const joinPaths = context.joinPaths ?? [];
+
+  // Direct parents
+  const directParents = relationships
+    .filter((r) => r.child.toLowerCase() === objectSnake.toLowerCase())
+    .map((r) => r.parent);
+
+  for (const parent of directParents) {
+    const parentSnake = toSnake(parent);
+    if (parentSnake === objectSnake) continue;
+    props.push({
+      name: `${parentSnake}_id`,
+      type: 'string',
+      required: true,
+      description: `ID of the parent ${parent}`,
+      todo: true,
+    });
+  }
+
+  // Grandparent from join paths (optional)
+  const objectPascal = toPascalCase(objectSnake);
+  const jp = joinPaths.find(
+    (p) => p.from.toLowerCase() === objectPascal.toLowerCase() && p.via.length >= 2
+  );
+  if (jp) {
+    const gpSnake = toSnake(jp.to);
+    if (gpSnake !== objectSnake && !directParents.map(toSnake).includes(gpSnake)) {
+      props.push({
+        name: `${gpSnake}_id`,
+        type: 'string',
+        required: false,
+        description: `ID of the grandparent ${jp.to} (for cross-entity correlation)`,
+        todo: true,
+      });
+    }
+  }
+
   return props;
+}
+
+function toSnake(s: string): string {
+  return s
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^a-zA-Z0-9_]+/g, '_')
+    .toLowerCase()
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
 }
 
 function computeCoverage(events: TrackingPlanEvent[]): CoverageStats {

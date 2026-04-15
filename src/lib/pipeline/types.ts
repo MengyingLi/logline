@@ -66,6 +66,8 @@ export interface PropertySpec {
   accessPath?: string;
   /** Whether we verified this variable exists in scope */
   verified: boolean;
+  /** True when the property came from context graph and couldn't be verified in scope */
+  todo?: boolean;
 }
 
 export interface InstrumentableEvent extends LocatedEvent {

@@ -1,15 +1,46 @@
 {
-  "name": "logline",
+  "name": "@logline/cli",
   "version": "0.1.0",
-  "private": true,
+  "description": "Semantic layer for product analytics — generates tracking plans from codebases. The missing piece between event delivery and AI agents.",
+  "keywords": [
+    "analytics",
+    "tracking",
+    "product-analytics",
+    "segment",
+    "amplitude",
+    "opentelemetry",
+    "ai-agent",
+    "cli",
+    "typescript"
+  ],
+  "homepage": "https://github.com/MengyingLi/logline",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MengyingLi/logline.git"
+  },
+  "license": "MIT",
+  "author": "Mengying Li",
+  "engines": {
+    "node": ">=18"
+  },
   "bin": {
     "logline": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
   },
   "scripts": {
     "build": "tsc",
     "dev:scan": "tsx src/cli.ts scan",
-    "test": "node --test",
-    "start": "node dist/cli.js"
+    "test": "node --test test/",
+    "start": "node dist/cli.js",
+    "prepublishOnly": "npm run build && npm test"
   },
   "dependencies": {
     "chalk": "^5.4.1",
@@ -27,6 +58,8 @@
   },
   "files": [
     "dist",
-    "conventions"
+    "conventions",
+    "README.md",
+    "LICENSE"
   ]
 }

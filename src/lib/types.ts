@@ -55,6 +55,8 @@ export interface EventProperty {
   type: 'string' | 'number' | 'boolean' | 'date' | 'object';
   required: boolean;
   description?: string;
+  /** True when this property came from the context graph and couldn't be verified in scope */
+  todo?: boolean;
 }
 
 export interface EventSuggestion {

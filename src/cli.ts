@@ -12,10 +12,14 @@ import { rejectCommand } from './commands/reject';
 import { metricsCommand } from './commands/metrics';
 import { contextCommand } from './commands/context';
 import { exportCommand } from './commands/export';
+import { doctorCommand } from './commands/doctor';
 
 const program = new Command();
 
-program.name('logline').description('Logline').version('0.1.0');
+program
+  .name('logline')
+  .description('Logline — semantic layer for product analytics. Generates tracking plans from codebases.')
+  .version('0.1.0');
 
 program
   .command('init')
@@ -148,6 +152,14 @@ program
       format,
       output: opts.output ? String(opts.output) : undefined,
     });
+  });
+
+program
+  .command('doctor')
+  .description('Check environment (Node version, API key, git, gh CLI, tracking plan)')
+  .option('--cwd <cwd>', 'Working directory')
+  .action(async (opts) => {
+    await doctorCommand({ cwd: opts.cwd ? String(opts.cwd) : undefined });
   });
 
 program.parseAsync();
