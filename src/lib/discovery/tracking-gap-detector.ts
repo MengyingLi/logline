@@ -31,6 +31,7 @@ export interface TrackingGap {
   location: CodeLocation;
   confidence: number; // 0-1
   priority: 'critical' | 'high' | 'medium' | 'low';
+  signalType?: import('../types').SignalType;
   searchPatterns?: string[];
   hint?: string;
   /** Business grouping: human-readable description of what this event represents */

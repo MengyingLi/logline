@@ -305,6 +305,17 @@ export interface ActorObjectExtractionResult {
   lifecycles: ObjectLifecycle[];
 }
 
+// ─── Signal Types ───
+
+/**
+ * Routes a signal to the right destination and code generation template.
+ * - action       → track()          → analytics (Segment, PostHog)
+ * - operation    → logger.info()    → logging (Datadog, Grafana)
+ * - state_change → BOTH             → analytics + logging
+ * - error        → logger.error()   → logging + alerts
+ */
+export type SignalType = 'action' | 'operation' | 'state_change' | 'error';
+
 // ─── Tracking Gap Types ───
 
 export type GapType = 'product_analytics' | 'operational';
@@ -500,6 +511,7 @@ export interface TrackingPlanEvent {
   locations: CodeLocation[];
   priority: 'critical' | 'high' | 'medium' | 'low';
   status: 'suggested' | 'approved' | 'implemented' | 'deprecated';
+  signalType: SignalType;        // routes to track() vs logger.info/error()
   includes?: string[];           // grouped granular events
   firstSeen: string;
   lastSeen: string;

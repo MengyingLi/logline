@@ -38,7 +38,7 @@
   "scripts": {
     "build": "tsc",
     "dev:scan": "tsx src/cli.ts scan",
-    "test": "node --test test/",
+    "test": "node --test test/*.test.js",
     "start": "node dist/cli.js",
     "prepublishOnly": "npm run build && npm test"
   },

@@ -188,37 +188,65 @@ function printScanResult(result: Awaited<ReturnType<typeof scanCommand>>): void 
   );
   console.log();
 
-  // Display suggested gaps by priority (from scan result only)
-  const groups: Array<{ title: string; key: string }> = [
-    { title: 'Critical Events (track these first):', key: 'critical' },
-    { title: 'High Priority:', key: 'high' },
-    { title: 'Medium Priority:', key: 'medium' },
-    { title: 'Low Priority:', key: 'low' },
+  // Display suggested gaps grouped by signal type
+  const signalGroups: Array<{ title: string; key: string; dest: string }> = [
+    { title: '📊 Analytics (→ Segment/PostHog):', key: 'action', dest: 'track()' },
+    { title: '🔄 State Transitions (→ analytics + logging):', key: 'state_change', dest: 'track() + logger.info()' },
+    { title: '🔧 Operations (→ logging):', key: 'operation', dest: 'logger.info()' },
+    { title: '🔴 Errors (→ logging + alerts):', key: 'error', dest: 'logger.error()' },
   ];
 
-  for (const g of groups) {
-    const items = gaps.filter((x) => x.priority === g.key);
-    if (items.length === 0) continue;
-    console.log(chalk.bold(g.title));
-    for (const gap of items.slice(0, 12)) {
-      const loc =
-        gap.location?.file != null && gap.location?.line != null
-          ? `${gap.location.file}:${gap.location.line}`
-          : gap.location?.file ?? 'unknown';
-      const hint = gap.hint ?? '';
-      const isGrouped = gap.description != null || (gap.includes != null && gap.includes.length > 0);
-      console.log(
-        `  ${chalk.yellow('✗')} ${chalk.bold((gap.suggestedEvent ?? '').padEnd(22))} ${loc} ${chalk.dim(hint)}`
-      );
-      if (isGrouped) {
+  const hasSignalTypes = gaps.some((g: any) => g.signalType);
+  if (hasSignalTypes) {
+    for (const sg of signalGroups) {
+      const items = gaps.filter((x: any) => (x.signalType ?? 'action') === sg.key);
+      if (items.length === 0) continue;
+      console.log(chalk.bold(sg.title));
+      for (const gap of (items as typeof gaps).slice(0, 12)) {
+        const loc =
+          gap.location?.file != null && gap.location?.line != null
+            ? `${gap.location.file}:${gap.location.line}`
+            : gap.location?.file ?? 'unknown';
+        console.log(
+          `  ${chalk.yellow('✗')} ${chalk.bold((gap.suggestedEvent ?? '').padEnd(22))} ${chalk.dim(loc)}`
+        );
         if (gap.description) console.log(chalk.dim(`                           ${gap.description}`));
         if (gap.includes?.length) {
           console.log(chalk.dim(`                           Includes: ${gap.includes.join(', ')}`));
         }
       }
+      if (items.length > 12) console.log(chalk.dim(`  ... and ${items.length - 12} more`));
+      console.log();
     }
-    if (items.length > 12) console.log(chalk.dim(`  ... and ${items.length - 12} more`));
-    console.log();
+  } else {
+    // Fallback: group by priority
+    const groups: Array<{ title: string; key: string }> = [
+      { title: 'Critical Events (track these first):', key: 'critical' },
+      { title: 'High Priority:', key: 'high' },
+      { title: 'Medium Priority:', key: 'medium' },
+      { title: 'Low Priority:', key: 'low' },
+    ];
+    for (const g of groups) {
+      const items = gaps.filter((x) => x.priority === g.key);
+      if (items.length === 0) continue;
+      console.log(chalk.bold(g.title));
+      for (const gap of items.slice(0, 12)) {
+        const loc =
+          gap.location?.file != null && gap.location?.line != null
+            ? `${gap.location.file}:${gap.location.line}`
+            : gap.location?.file ?? 'unknown';
+        const hint = gap.hint ?? '';
+        console.log(
+          `  ${chalk.yellow('✗')} ${chalk.bold((gap.suggestedEvent ?? '').padEnd(22))} ${loc} ${chalk.dim(hint)}`
+        );
+        if (gap.description) console.log(chalk.dim(`                           ${gap.description}`));
+        if (gap.includes?.length) {
+          console.log(chalk.dim(`                           Includes: ${gap.includes.join(', ')}`));
+        }
+      }
+      if (items.length > 12) console.log(chalk.dim(`  ... and ${items.length - 12} more`));
+      console.log();
+    }
   }
 
   // Already tracked (from scan result only)

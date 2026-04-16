@@ -58,6 +58,7 @@ export async function specCommand(options: { cwd?: string }): Promise<void> {
     locations: ev.locations,
     priority: 'medium' as const,
     status: 'implemented' as const,
+    signalType: 'action' as const,
     firstSeen: now,
     lastSeen: now,
   }));
@@ -144,6 +145,7 @@ function gapToEvent(gap: TrackingGap, now: string, context?: TrackingPlanContext
     locations: gap.location ? [gap.location] : [],
     priority: gap.priority ?? 'medium',
     status: 'suggested',
+    signalType: gap.signalType ?? 'action',
     includes: gap.includes,
     firstSeen: now,
     lastSeen: now,

@@ -180,6 +180,7 @@ function synthesizedToGap(event: SynthesizedEvent): TrackingGap {
     location: event.location,
     confidence: event.location.confidence ?? 0.6,
     priority: event.priority,
+    signalType: event.signalType,
     description: event.description,
     includes: event.includes,
     locations: event.allLocations?.map((l) => l.file),
@@ -193,6 +194,7 @@ function synthesizedToGapLike(event: SynthesizedEvent): TrackingGap {
     location: event.location ?? { file: 'unknown', line: 0 },
     confidence: event.location?.confidence ?? 0.5,
     priority: event.priority,
+    signalType: event.signalType,
   };
 }
 
