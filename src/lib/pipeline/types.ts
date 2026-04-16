@@ -11,7 +11,7 @@ export interface InventoryResult {
 /** A raw interaction found in code — NO event name assigned yet */
 export interface RawInteraction {
   /** What kind of code pattern this is */
-  type: 'click_handler' | 'form_submit' | 'route_handler' | 'mutation' | 'lifecycle' | 'state_change' | 'toggle';
+  type: 'click_handler' | 'form_submit' | 'route_handler' | 'mutation' | 'lifecycle' | 'state_change' | 'toggle' | 'error_boundary' | 'api_call' | 'retry_logic' | 'job_handler';
   /** File where the interaction was found */
   file: string;
   /** Line number (1-indexed) */
@@ -40,6 +40,7 @@ export interface SynthesizedEvent {
   name: string;                  // "workflow_edited"
   description: string;           // "User modified their workflow"
   priority: 'critical' | 'high' | 'medium' | 'low';
+  signalType: import('../types').SignalType;
   /** Which raw interactions this event covers (indices into DetectionResult.interactions) */
   sourceInteractions: number[];
   /** If this groups multiple interactions, what granular actions are included */

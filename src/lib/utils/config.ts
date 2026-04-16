@@ -8,6 +8,11 @@ export interface LoglineConfig {
     importPath: string;
     functionName: string;
   };
+  logging?: {
+    destination: 'pino' | 'winston' | 'datadog' | 'console';
+    importPath: string;
+    instanceName: string;
+  };
   scan: {
     include: string[];
     exclude: string[];
@@ -61,6 +66,22 @@ export function readLoglineConfig(cwd: string): LoglineConfig {
             ? cfg.tracking.functionName.trim()
             : defaults.tracking.functionName,
       },
+      logging: cfg.logging
+        ? {
+            destination:
+              ['pino', 'winston', 'datadog', 'console'].includes(cfg.logging.destination ?? '')
+                ? (cfg.logging.destination as NonNullable<LoglineConfig['logging']>['destination'])
+                : 'console',
+            importPath:
+              typeof cfg.logging.importPath === 'string' && cfg.logging.importPath.trim()
+                ? cfg.logging.importPath.trim()
+                : '@/lib/logger',
+            instanceName:
+              typeof cfg.logging.instanceName === 'string' && cfg.logging.instanceName.trim()
+                ? cfg.logging.instanceName.trim()
+                : 'logger',
+          }
+        : undefined,
       scan: {
         include: Array.isArray(cfg.scan?.include) && cfg.scan!.include!.length
           ? cfg.scan!.include!

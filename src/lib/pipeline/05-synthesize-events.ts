@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import type { ProductProfile, CodeLocation } from '../types';
+import type { ProductProfile, CodeLocation, SignalType } from '../types';
 import type { RawInteraction, SynthesizedEvent } from './types';
 import {
   extractLikelyObjectFromPath,
@@ -46,6 +46,7 @@ function regexFallbackSynthesis(
       name,
       description: `${interaction.type}: ${interaction.functionName}`,
       priority: scorePriority(name, interaction),
+      signalType: inferSignalType(interaction.type),
       sourceInteractions: [i],
       location: {
         file: interaction.file,
@@ -121,6 +122,7 @@ async function llmSynthesis(
       if (validSource.length === 0) continue;
 
       for (const idx of validSource) coveredIndices.add(idx);
+      const primaryInteractionType = validSource.length > 0 ? interactions[validSource[0]]?.type : undefined;
       allEvents.push({
         name: raw.name,
         description:
@@ -128,6 +130,7 @@ async function llmSynthesis(
             ? raw.description
             : `Business interaction: ${raw.name}`,
         priority: toPriority(raw.priority),
+        signalType: inferSignalType(primaryInteractionType),
         sourceInteractions: validSource,
         includes: Array.isArray(raw.includes)
           ? raw.includes.filter((x): x is string => typeof x === 'string')
@@ -148,6 +151,7 @@ async function llmSynthesis(
       name,
       description: `${interaction.type}: ${interaction.functionName}`,
       priority: scorePriority(name, interaction),
+      signalType: inferSignalType(interaction.type),
       sourceInteractions: [i],
       location: {
         file: interaction.file,
@@ -249,6 +253,28 @@ function scorePriority(eventName: string, interaction: RawInteraction): Synthesi
   return 'medium';
 }
 
+export function inferSignalType(interactionType: RawInteraction['type'] | undefined): SignalType {
+  switch (interactionType) {
+    case 'click_handler':
+    case 'form_submit':
+    case 'toggle':
+    case 'route_handler':
+    case 'mutation':
+      return 'action';
+    case 'lifecycle':
+    case 'state_change':
+      return 'state_change';
+    case 'error_boundary':
+      return 'error';
+    case 'api_call':
+    case 'retry_logic':
+    case 'job_handler':
+      return 'operation';
+    default:
+      return 'action';
+  }
+}
+
 function buildPreGroupKey(interaction: RawInteraction): string {
   const entity = interaction.relatedEntities?.[0] ?? extractLikelyObjectFromPath(interaction.file) ?? 'unknown';
   const file = interaction.file.split(/[\\/]/).pop() ?? interaction.file;
@@ -299,6 +325,7 @@ function groupBusinessEdits(events: SynthesizedEvent[]): SynthesizedEvent[] {
       name,
       description: `User edited ${object} (grouped changes)`,
       priority: 'high',
+      signalType: 'action',
       sourceInteractions,
       includes,
       location: best.location,

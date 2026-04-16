@@ -10,22 +10,42 @@ const { readTrackingPlan, writeTrackingPlan } = require('../dist/lib/utils/track
 
 const fixtureRoot = path.join(process.cwd(), 'test', 'fixtures');
 
+function copyDir(src, dst) {
+  fs.mkdirSync(dst, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (entry.name === '.logline') continue; // never copy cache
+    const s = path.join(src, entry.name);
+    const d = path.join(dst, entry.name);
+    if (entry.isDirectory()) copyDir(s, d);
+    else fs.copyFileSync(s, d);
+  }
+}
+
+function tmpFixture(name) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `logline-${name}-`));
+  copyDir(path.join(fixtureRoot, name), tmp);
+  return tmp;
+}
+
 test('nextjs-saas: finds existing segment-like calls', async () => {
-  const result = await scanCommand({ cwd: path.join(fixtureRoot, 'nextjs-saas'), fast: true });
+  const tmp = tmpFixture('nextjs-saas');
+  const result = await scanCommand({ cwd: tmp, fast: true });
   assert.ok(result.events.length > 0);
   assert.ok(result.events.some((e) => e.framework === 'segment'));
 });
 
 test('no garbage event names in any fixture', async () => {
   for (const fixture of ['nextjs-saas', 'express-api', 'react-spa']) {
-    const result = await scanCommand({ cwd: path.join(fixtureRoot, fixture), fast: true });
+    const tmp = tmpFixture(fixture);
+    const result = await scanCommand({ cwd: tmp, fast: true });
     const garbage = result.gaps.filter((g) => /^(\w+)_\1ed$/.test(g.suggestedEvent));
     assert.equal(garbage.length, 0);
   }
 });
 
 test('express-api: detects route handlers and CRUD-ish events', async () => {
-  const result = await scanCommand({ cwd: path.join(fixtureRoot, 'express-api'), fast: true });
+  const tmp = tmpFixture('express-api');
+  const result = await scanCommand({ cwd: tmp, fast: true });
   assert.ok(result.gaps.some((g) => /created|updated|deleted/.test(g.suggestedEvent)));
 });
 
@@ -72,14 +92,3 @@ test('tracking plan merge preserves approved events', async () => {
   assert.ok(sameEvent);
   assert.equal(sameEvent.status, 'approved');
 });
-
-function copyDir(src, dst) {
-  fs.mkdirSync(dst, { recursive: true });
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    const s = path.join(src, entry.name);
-    const d = path.join(dst, entry.name);
-    if (entry.isDirectory()) copyDir(s, d);
-    else fs.copyFileSync(s, d);
-  }
-}
-

@@ -1,4 +1,5 @@
 import type { TrackingGap } from '../discovery/tracking-gap-detector';
+import type { SignalType } from '../types';
 import { analyzeScope, type ScopeVariable } from './scope-analyzer';
 
 export interface CodeContext {
@@ -14,16 +15,47 @@ export function generateTrackingCode(
   gap: TrackingGap,
   fileContent?: string,
   effectiveLine?: number,
-  options?: { functionName?: string }
+  options?: {
+    functionName?: string;
+    signalType?: SignalType;
+    logging?: { importPath: string; instanceName: string };
+  }
 ): string {
   const targetLine = effectiveLine ?? gap.location?.line ?? 0;
   const props = fileContent ? inferProperties(gap, fileContent, targetLine) : inferPropertiesFallback(gap);
+  const signalType = options?.signalType ?? gap.signalType ?? 'action';
   const fn = options?.functionName?.trim() ? options.functionName.trim() : 'track';
+  const loggerName = options?.logging?.instanceName ?? 'logger';
 
   const propsStr = props
     .map((p) => `  ${p.name}: ${p.value},${p.todo ? ' // TODO: verify' : ''}`)
     .join('\n');
 
+  if (signalType === 'operation') {
+    return `// Logline: ${gap.suggestedEvent}
+${loggerName}.info('${gap.suggestedEvent}', {
+${propsStr}
+});`;
+  }
+
+  if (signalType === 'error') {
+    return `// Logline: ${gap.suggestedEvent}
+${loggerName}.error('${gap.suggestedEvent}', {
+${propsStr}
+});`;
+  }
+
+  if (signalType === 'state_change') {
+    return `// Logline: ${gap.suggestedEvent}
+${fn}('${gap.suggestedEvent}', {
+${propsStr}
+});
+${loggerName}.info('${gap.suggestedEvent}', {
+${propsStr}
+});`;
+  }
+
+  // default: action → track()
   return `// Logline: ${gap.suggestedEvent}
 ${fn}('${gap.suggestedEvent}', {
 ${propsStr}

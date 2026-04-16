@@ -37,6 +37,10 @@ export function detectInteractions(files: FileContent[]): RawInteraction[] {
     interactions.push(...detectTRPCMutationsAndQueries(file, content, lines));
     interactions.push(...detectReduxDispatches(file, content, lines));
     interactions.push(...detectToggles(file, content, lines));
+    interactions.push(...detectErrorBoundaries(file, content, lines));
+    interactions.push(...detectAPICalls(file, content, lines));
+    interactions.push(...detectRetryLogic(file, content, lines));
+    interactions.push(...detectJobHandlers(file, content, lines));
   }
 
   return deduplicateInteractions(interactions);
@@ -448,14 +452,180 @@ function toPascalCase(s: string): string {
     .join('');
 }
 
+// ─── Operational pattern detectors ───
+
+function detectErrorBoundaries(file: FileContent, content: string, lines: string[]): RawInteraction[] {
+  const results: RawInteraction[] = [];
+  // try/catch blocks
+  const tryCatch = /\btry\s*\{/g;
+  let m: RegExpExecArray | null;
+  while ((m = tryCatch.exec(content)) !== null) {
+    const { line, context } = buildContext(content, m.index, lines);
+    const funcName = findEnclosingFunction(lines, line) ?? 'errorHandler';
+    const entities = extractEntitiesFromContext(context);
+    results.push({
+      type: 'error_boundary',
+      file: file.path,
+      line,
+      functionName: funcName,
+      codeContext: context,
+      relatedEntities: entities,
+      confidence: 0.7,
+    });
+  }
+  // .catch() chains
+  const dotCatch = /\.catch\s*\(/g;
+  while ((m = dotCatch.exec(content)) !== null) {
+    const { line, context } = buildContext(content, m.index, lines);
+    const funcName = findEnclosingFunction(lines, line) ?? 'catchHandler';
+    const entities = extractEntitiesFromContext(context);
+    results.push({
+      type: 'error_boundary',
+      file: file.path,
+      line,
+      functionName: funcName,
+      codeContext: context,
+      relatedEntities: entities,
+      confidence: 0.65,
+    });
+  }
+  return results;
+}
+
+function detectAPICalls(file: FileContent, content: string, lines: string[]): RawInteraction[] {
+  const results: RawInteraction[] = [];
+  const patterns: RegExp[] = [
+    /\bfetch\s*\(\s*['"`]([^'"`]+)['"`]/g,
+    /\baxios\s*\.\s*(?:get|post|put|patch|delete)\s*\(\s*['"`]([^'"`]+)['"`]/g,
+    /\b\w+Client\s*\.\s*request\s*\(/g,
+  ];
+  for (const pattern of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(content)) !== null) {
+      const { line, context } = buildContext(content, m.index, lines);
+      const url = m[1] ?? '';
+      const entities = url ? extractEntitiesFromURL(url) : extractEntitiesFromContext(context);
+      const funcName = findEnclosingFunction(lines, line) ?? 'apiCall';
+      results.push({
+        type: 'api_call',
+        file: file.path,
+        line,
+        functionName: funcName,
+        codeContext: context,
+        relatedEntities: entities,
+        triggerExpression: m[0].slice(0, 60),
+        confidence: 0.6,
+      });
+    }
+  }
+  return results;
+}
+
+function detectRetryLogic(file: FileContent, content: string, lines: string[]): RawInteraction[] {
+  const results: RawInteraction[] = [];
+  const patterns: RegExp[] = [
+    /\bwithRetry\s*\(/g,
+    /\bretry\s*\(/g,
+    /\bbackoff\s*\(/g,
+    /(?:for|while)\s*\([^)]*(?:retry|attempt|retries)[^)]*\)/g,
+  ];
+  const seen = new Set<number>();
+  for (const pattern of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(content)) !== null) {
+      const { line, context } = buildContext(content, m.index, lines);
+      if (seen.has(line)) continue;
+      seen.add(line);
+      const funcName = findEnclosingFunction(lines, line) ?? 'retryHandler';
+      results.push({
+        type: 'retry_logic',
+        file: file.path,
+        line,
+        functionName: funcName,
+        codeContext: context,
+        relatedEntities: extractEntitiesFromContext(context),
+        triggerExpression: m[0].slice(0, 60),
+        confidence: 0.75,
+      });
+    }
+  }
+  return results;
+}
+
+function detectJobHandlers(file: FileContent, content: string, lines: string[]): RawInteraction[] {
+  const results: RawInteraction[] = [];
+  const patterns: RegExp[] = [
+    /\bqueue\s*\.\s*process\s*\(\s*['"`]([^'"`]+)['"`]/g,
+    /\bcron\s*\.\s*schedule\s*\(/g,
+    /\bcreateFunction\s*\(\s*\{[^}]*name\s*:/g,
+    /\binngest\.createFunction\s*\(/g,
+    /\bbullmq\s*\.\s*(?:add|process)\s*\(/g,
+  ];
+  for (const pattern of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = pattern.exec(content)) !== null) {
+      const { line, context } = buildContext(content, m.index, lines);
+      const jobName = m[1] ?? findEnclosingFunction(lines, line) ?? 'jobHandler';
+      results.push({
+        type: 'job_handler',
+        file: file.path,
+        line,
+        functionName: jobName,
+        codeContext: context,
+        relatedEntities: extractEntitiesFromContext(context),
+        triggerExpression: m[0].slice(0, 60),
+        confidence: 0.85,
+      });
+    }
+  }
+  return results;
+}
+
+// ─── Operational helper functions ───
+
+function findEnclosingFunction(lines: string[], lineNumber: number): string | null {
+  const BUILTIN = new Set(['Promise', 'Error', 'Object', 'Array', 'Function', 'if', 'for', 'while', 'switch']);
+  const funcPattern = /(?:function\s+(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(|(?:const|let|var)\s+(\w+)\s*=\s*async\s+\()/;
+  // Walk backward from the interaction line
+  for (let i = Math.min(lineNumber - 1, lines.length - 1); i >= 0; i--) {
+    const line = lines[i];
+    const m = line.match(funcPattern);
+    if (m) {
+      const name = m[1] ?? m[2] ?? m[3];
+      if (name && !BUILTIN.has(name)) return name;
+    }
+  }
+  return null;
+}
+
+function extractEntitiesFromContext(context: string): string[] {
+  const BUILTIN = new Set(['Promise', 'Error', 'Object', 'Array', 'Function', 'Request', 'Response', 'Event', 'String', 'Number', 'Boolean']);
+  const matches = context.match(/\b[A-Z][a-z]{2,}[A-Za-z]*\b/g) ?? [];
+  return [...new Set(matches)].filter((w) => !BUILTIN.has(w)).slice(0, 5);
+}
+
+function extractEntitiesFromURL(url: string): string[] {
+  return url
+    .split('/')
+    .filter((p) => p && !p.startsWith(':') && !p.startsWith('{') && !['api', 'v1', 'v2', 'v3'].includes(p))
+    .flatMap((p) => p.replace(/-/g, '_').split('_'))
+    .map((p) => p.replace(/s$/, ''))
+    .filter((p) => p.length >= 3 && !/^\d+$/.test(p))
+    .slice(0, 3);
+}
+
 // ─── Deduplication ───
 
 function deduplicateInteractions(interactions: RawInteraction[]): RawInteraction[] {
-  // Deduplicate by file + functionName; keep the one with higher confidence
+  // Operational types (multiple per function are valid) deduplicate by file + line.
+  // User-interaction types deduplicate by file + functionName (one event per handler).
+  const OPERATIONAL = new Set<RawInteraction['type']>(['error_boundary', 'api_call', 'retry_logic', 'job_handler']);
   const byKey = new Map<string, RawInteraction>();
 
   for (const interaction of interactions) {
-    const key = `${interaction.file}::${interaction.functionName}`;
+    const key = OPERATIONAL.has(interaction.type)
+      ? `${interaction.file}::${interaction.type}::${interaction.line}`
+      : `${interaction.file}::${interaction.functionName}`;
     const existing = byKey.get(key);
     if (!existing || interaction.confidence > existing.confidence) {
       byKey.set(key, interaction);

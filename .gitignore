@@ -7,3 +7,4 @@ dist
 *.tsbuildinfo
 .logline
 .next
+test/fixtures/**/.logline/
