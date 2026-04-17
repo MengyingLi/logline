@@ -218,6 +218,29 @@ Metrics you can compute:
 
 The join paths tell an agent exactly how to correlate events across entities without knowing the schema upfront. The expected sequences define what "normal" looks like — deviations are anomalies worth investigating.
 
+## Signal Types
+
+Logline detects four types of observability signals from the same scan:
+
+| Signal | What it captures | Generated code | Destination |
+|--------|-----------------|----------------|-------------|
+| `action` | User actions (click, submit, create) | `track()` | Segment, PostHog, Mixpanel |
+| `operation` | System operations (API call, background job) | `logger.info()` | Datadog, Grafana, ELK |
+| `state_change` | Lifecycle transitions (draft → active) | Both `track()` and `logger.info()` | Analytics + Logging |
+| `error` | Failures (timeout, validation error) | `logger.error()` | Logging + Alerts |
+
+Same entities, same properties, same IDs — correlated by design. Configure the logging destination in `.logline/config.json`:
+
+```json
+{
+  "logging": {
+    "destination": "pino",
+    "importPath": "@/lib/logger",
+    "instanceName": "logger"
+  }
+}
+```
+
 ## Supported Stacks
 
 **Frameworks:** React / Next.js · Vue (coming soon) · Express / Fastify

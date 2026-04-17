@@ -1,6 +1,6 @@
 {
   "name": "@logline/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Semantic layer for product analytics — generates tracking plans from codebases. The missing piece between event delivery and AI agents.",
   "keywords": [
     "analytics",

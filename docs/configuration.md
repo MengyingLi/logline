@@ -67,6 +67,28 @@ Glob patterns for files to exclude. These are merged with Logline's built-in exc
 }
 ```
 
+### `logging`
+
+Configure how Logline generates structured log statements for `operation`, `error`, and `state_change` signals. Optional — if omitted, a console-based stub is used.
+
+```json
+{
+  "logging": {
+    "destination": "pino",
+    "importPath": "@/lib/logger",
+    "instanceName": "logger"
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `destination` | `'pino' \| 'winston' \| 'console'` | `'console'` | Logger library. Determines the generated `src/lib/logger.ts` template when `logline pr` creates one. |
+| `importPath` | string | `'@/lib/logger'` | Import path used in generated code: `import { logger } from '@/lib/logger'`. |
+| `instanceName` | string | `'logger'` | Variable name for the logger. Generates `logger.info(...)`, `logger.error(...)`. |
+
+`logline pr` creates `src/lib/logger.ts` automatically when operational signals are found and the file doesn't already exist.
+
 ### `tracking.destination`
 
 Hints to Logline which analytics library is already in use, affecting generated `track()` calls.
