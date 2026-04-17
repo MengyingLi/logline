@@ -54,6 +54,7 @@ function detectClickHandlers(file: FileContent, content: string, lines: string[]
   let m: RegExpExecArray | null;
 
   while ((m = pattern.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const expr = m[1].trim();
     const handlerName = extractHandlerName(expr);
     if (!handlerName) continue;
@@ -86,6 +87,7 @@ function detectFormSubmits(file: FileContent, content: string, lines: string[]):
   let m: RegExpExecArray | null;
 
   while ((m = pattern.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const expr = m[1].trim();
     const handlerName = extractHandlerName(expr) ?? expr.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 30);
     if (!handlerName) continue;
@@ -122,6 +124,7 @@ function detectHandlerDeclarations(file: FileContent, content: string, lines: st
   for (const pattern of [arrowPattern, funcPattern]) {
     let m: RegExpExecArray | null;
     while ((m = pattern.exec(content)) !== null) {
+      if (isInsideStringOrComment(content, m.index)) continue;
       const handlerName = m[1];
       const { line, context } = buildContext(content, m.index, lines);
 
@@ -150,6 +153,7 @@ function detectRouteHandlers(file: FileContent, content: string, lines: string[]
   const expressPattern = /(?:router|app)\.(post|get|put|patch|delete)\s*\(\s*['"`]([^'"`]+)['"`]/gi;
   let m: RegExpExecArray | null;
   while ((m = expressPattern.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const method = m[1].toUpperCase();
     const routePath = m[2];
     const { line, context } = buildContext(content, m.index, lines);
@@ -171,6 +175,7 @@ function detectRouteHandlers(file: FileContent, content: string, lines: string[]
   if (file.path.match(/\/api\/.*\/route\.(ts|js)$/)) {
     const appRouterPattern = /export\s+(?:async\s+)?function\s+(POST|GET|PUT|PATCH|DELETE)\s*\(/g;
     while ((m = appRouterPattern.exec(content)) !== null) {
+      if (isInsideStringOrComment(content, m.index)) continue;
       const method = m[1].toUpperCase();
       const routePath = file.path
         .replace(/^src\/app/, '')
@@ -196,6 +201,7 @@ function detectRouteHandlers(file: FileContent, content: string, lines: string[]
   if (file.path.match(/pages\/api\/.+\.(ts|js)$/)) {
     const pageHandlerPattern = /export\s+default\s+(?:async\s+)?function\s+(?:handler\s*)?\(/g;
     while ((m = pageHandlerPattern.exec(content)) !== null) {
+      if (isInsideStringOrComment(content, m.index)) continue;
       const routePath = '/api/' + file.path
         .replace(/^.*pages\/api\//, '')
         .replace(/\.(ts|js)$/, '')
@@ -225,6 +231,7 @@ function detectMutations(file: FileContent, content: string, lines: string[]): R
   // Prisma: prisma.model.create/update/delete/upsert(
   const prismaPattern = /prisma\.([a-zA-Z][a-zA-Z0-9]*)\.(create|update|delete|upsert|deleteMany|updateMany|createMany)\s*\(/g;
   while ((m = prismaPattern.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const model = m[1];
     const op = m[2];
     const { line, context } = buildContext(content, m.index, lines);
@@ -244,6 +251,7 @@ function detectMutations(file: FileContent, content: string, lines: string[]): R
   // Supabase: supabase.from('table').insert/update/delete(
   const supabasePattern = /supabase\.from\(['"]([^'"]+)['"]\)\.(insert|update|delete|upsert)\s*\(/g;
   while ((m = supabasePattern.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const table = m[1];
     const op = m[2];
     const { line, context } = buildContext(content, m.index, lines);
@@ -263,6 +271,7 @@ function detectMutations(file: FileContent, content: string, lines: string[]): R
   // Drizzle: db.insert(table).values / db.update(table).set / db.delete(table)
   const drizzlePattern = /db\.(insert|update|delete)\s*\(\s*([a-zA-Z][a-zA-Z0-9]*)\s*\)/g;
   while ((m = drizzlePattern.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const op = m[1];
     const table = m[2];
     const { line, context } = buildContext(content, m.index, lines);
@@ -282,6 +291,7 @@ function detectMutations(file: FileContent, content: string, lines: string[]): R
   // useMutation (React Query / tRPC)
   const useMutationPattern = /\buseMutation\s*[(<]/g;
   while ((m = useMutationPattern.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const { line, context } = buildContext(content, m.index, lines);
     const entities = extractEntitiesFromFilePath(file.path);
 
@@ -306,6 +316,7 @@ function detectToggles(file: FileContent, content: string, lines: string[]): Raw
   let m: RegExpExecArray | null;
 
   while ((m = pattern.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const expr = m[1].trim();
     const handlerName = extractHandlerName(expr) ?? expr.slice(0, 40);
     const { line, context } = buildContext(content, m.index, lines);
@@ -336,6 +347,7 @@ function detectServerActions(file: FileContent, content: string, lines: string[]
   const pattern = /export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = pattern.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const fn = m[1];
     const { line, context } = buildContext(content, m.index, lines);
     results.push({
@@ -359,6 +371,7 @@ function detectTRPCMutationsAndQueries(file: FileContent, content: string, lines
   const keyProcPattern = /([A-Za-z0-9_]+)\s*:\s*[^;]*?\.(mutation|query)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = keyProcPattern.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const key = m[1];
     const op = m[2].toLowerCase();
     const { line, context } = buildContext(content, m.index, lines);
@@ -382,6 +395,7 @@ function detectTRPCMutationsAndQueries(file: FileContent, content: string, lines
   // Client-side hooks: something.useMutation(...)
   const hookPattern = /\.use(Mutation|Query)\s*(?:<[^>]+>)?\s*\(/g;
   while ((m = hookPattern.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const { line, context } = buildContext(content, m.index, lines);
     const op = String(m[1] ?? '').toLowerCase();
     const verb = op === 'query' ? 'select' : 'create';
@@ -411,6 +425,7 @@ function detectReduxDispatches(file: FileContent, content: string, lines: string
   const pattern = /\bdispatch\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = pattern.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const actionCreator = m[1];
     const { line, context } = buildContext(content, m.index, lines);
     results.push({
@@ -460,6 +475,7 @@ function detectErrorBoundaries(file: FileContent, content: string, lines: string
   const tryCatch = /\btry\s*\{/g;
   let m: RegExpExecArray | null;
   while ((m = tryCatch.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const { line, context } = buildContext(content, m.index, lines);
     const funcName = findEnclosingFunction(lines, line) ?? 'errorHandler';
     const entities = extractEntitiesFromContext(context);
@@ -476,6 +492,7 @@ function detectErrorBoundaries(file: FileContent, content: string, lines: string
   // .catch() chains
   const dotCatch = /\.catch\s*\(/g;
   while ((m = dotCatch.exec(content)) !== null) {
+    if (isInsideStringOrComment(content, m.index)) continue;
     const { line, context } = buildContext(content, m.index, lines);
     const funcName = findEnclosingFunction(lines, line) ?? 'catchHandler';
     const entities = extractEntitiesFromContext(context);
@@ -502,6 +519,7 @@ function detectAPICalls(file: FileContent, content: string, lines: string[]): Ra
   for (const pattern of patterns) {
     let m: RegExpExecArray | null;
     while ((m = pattern.exec(content)) !== null) {
+      if (isInsideStringOrComment(content, m.index)) continue;
       const { line, context } = buildContext(content, m.index, lines);
       const url = m[1] ?? '';
       const entities = url ? extractEntitiesFromURL(url) : extractEntitiesFromContext(context);
@@ -533,6 +551,7 @@ function detectRetryLogic(file: FileContent, content: string, lines: string[]): 
   for (const pattern of patterns) {
     let m: RegExpExecArray | null;
     while ((m = pattern.exec(content)) !== null) {
+      if (isInsideStringOrComment(content, m.index)) continue;
       const { line, context } = buildContext(content, m.index, lines);
       if (seen.has(line)) continue;
       seen.add(line);
@@ -564,6 +583,7 @@ function detectJobHandlers(file: FileContent, content: string, lines: string[]):
   for (const pattern of patterns) {
     let m: RegExpExecArray | null;
     while ((m = pattern.exec(content)) !== null) {
+      if (isInsideStringOrComment(content, m.index)) continue;
       const { line, context } = buildContext(content, m.index, lines);
       const jobName = m[1] ?? findEnclosingFunction(lines, line) ?? 'jobHandler';
       results.push({
@@ -607,7 +627,10 @@ function extractEntitiesFromContext(context: string): string[] {
 function extractEntitiesFromURL(url: string): string[] {
   return url
     .split('/')
-    .filter((p) => p && !p.startsWith(':') && !p.startsWith('{') && !['api', 'v1', 'v2', 'v3'].includes(p))
+    .filter((p) => p && !p.startsWith(':') && !p.startsWith('{'))
+    .filter((p) => !/^https?:$/.test(p))   // strip protocol segments
+    .filter((p) => !p.includes('.'))         // strip hostnames (api.example.com)
+    .filter((p) => !['api', 'v1', 'v2', 'v3'].includes(p))
     .flatMap((p) => p.replace(/-/g, '_').split('_'))
     .map((p) => p.replace(/s$/, ''))
     .filter((p) => p.length >= 3 && !/^\d+$/.test(p))
@@ -636,6 +659,62 @@ function deduplicateInteractions(interactions: RawInteraction[]): RawInteraction
 }
 
 // ─── Helpers ───
+
+/**
+ * Returns true if the character at matchIndex in content is inside a string literal,
+ * single-line comment, or block comment. Used to suppress false positives from
+ * regex detectors matching documentation strings, template literals, or commented code.
+ */
+function isInsideStringOrComment(content: string, matchIndex: number): boolean {
+  const before = content.substring(0, matchIndex);
+
+  // Fast path: check if this line starts with a comment marker
+  const lastNl = before.lastIndexOf('\n');
+  const lineStart = before.substring(lastNl + 1);
+  if (/^\s*(\/\/|\*)/.test(lineStart)) return true;
+
+  // Check for inline // comment before the match on this line
+  const inlineCommentIdx = lineStart.indexOf('//');
+  if (inlineCommentIdx !== -1) {
+    const beforeComment = lineStart.substring(0, inlineCommentIdx);
+    const singleCount = (beforeComment.match(/'/g) ?? []).length;
+    const doubleCount = (beforeComment.match(/"/g) ?? []).length;
+    // If quotes are balanced, the // is outside any string → it's a real comment
+    if (singleCount % 2 === 0 && doubleCount % 2 === 0) return true;
+  }
+
+  // Check for unclosed block comment /* ... */
+  const lastOpen = before.lastIndexOf('/*');
+  if (lastOpen !== -1) {
+    const lastClose = before.lastIndexOf('*/');
+    if (lastClose < lastOpen) return true;
+  }
+
+  // Walk the content up to matchIndex tracking string state
+  let inSingle = false;
+  let inDouble = false;
+  let inTemplate = false;
+  for (let i = 0; i < before.length; i++) {
+    const ch = before[i];
+    if (ch === '\\' && (inSingle || inDouble || inTemplate)) {
+      i++; // skip escaped character
+      continue;
+    }
+    if (!inSingle && !inDouble && !inTemplate) {
+      if (ch === "'") inSingle = true;
+      else if (ch === '"') inDouble = true;
+      else if (ch === '`') inTemplate = true;
+    } else if (inSingle && ch === "'") {
+      inSingle = false;
+    } else if (inDouble && ch === '"') {
+      inDouble = false;
+    } else if (inTemplate && ch === '`') {
+      inTemplate = false;
+    }
+  }
+
+  return inSingle || inDouble || inTemplate;
+}
 
 function buildContext(
   content: string,

@@ -347,6 +347,12 @@ function extractObject(eventName: string): string {
  * Will be replaced by LLM synthesis on Day 4.
  */
 function guessEventName(interaction: RawInteraction): string | null {
+  // Operational types get domain-specific naming before generic handler parsing.
+  if (interaction.type === 'error_boundary') return guessErrorBoundaryName(interaction);
+  if (interaction.type === 'api_call') return guessAPICallName(interaction);
+  if (interaction.type === 'retry_logic') return guessRetryName(interaction);
+  if (interaction.type === 'job_handler') return guessJobHandlerName(interaction);
+
   if (interaction.type === 'route_handler') {
     return guessRouteEventName(interaction);
   }
@@ -387,16 +393,78 @@ function guessEventName(interaction: RawInteraction): string | null {
     return `${object}_${pastVerb}`;
   }
 
-  // Fall back to related entities from the interaction
-  if (interaction.relatedEntities?.length) {
-    const entity = interaction.relatedEntities[0];
-    return `${entity}_interacted`;
+  // No valid event name could be inferred — drop this interaction rather than
+  // emitting garbage names like "workflow_interacted".
+  return null;
+}
+
+// Generic utility function names that shouldn't become event name prefixes
+const OPERATIONAL_UTIL_NAMES = new Set([
+  'errhandler', 'errorhandler', 'catchhandler', 'apicall', 'retryhandler',
+  'jobhandler', 'withretry', 'retry', 'backoff', 'processjob',
+]);
+
+function cleanOperationalFunctionName(fn: string): string | null {
+  const stripped = fn.replace(/^(handle|on)/i, '');
+  const snaked = toSnakeCaseFromPascalOrCamel(stripped);
+  if (!snaked || snaked.length < 3) return null;
+  if (OPERATIONAL_UTIL_NAMES.has(snaked.replace(/_/g, ''))) return null;
+  return snaked;
+}
+
+function pickEntity(relatedEntities: string[] | undefined): string | null {
+  // Skip generic utility words that would produce bad names (e.g., "retry_retried")
+  const SKIP = new Set(['retry', 'error', 'catch', 'job', 'handler', 'util', 'helper']);
+  for (const raw of relatedEntities ?? []) {
+    const e = raw.toLowerCase();
+    if (e.length >= 3 && !SKIP.has(e)) return e;
   }
+  return null;
+}
 
-  // Final fallback: if we can infer object from file path, use it.
-  const fromPath = extractLikelyObjectFromPath(interaction.file);
-  if (fromPath) return `${fromPath}_interacted`;
+function guessErrorBoundaryName(interaction: RawInteraction): string | null {
+  const fn = interaction.functionName;
+  if (fn && fn !== 'errorHandler' && fn !== 'catchHandler') {
+    const snaked = cleanOperationalFunctionName(fn);
+    if (snaked) return `${snaked}_failed`;
+  }
+  const entity = pickEntity(interaction.relatedEntities);
+  if (entity) return `${entity}_failed`;
+  return null;
+}
 
+function guessAPICallName(interaction: RawInteraction): string | null {
+  const entity = pickEntity(interaction.relatedEntities);
+  if (entity) return `${entity}_fetched`;
+  const fn = interaction.functionName;
+  if (fn && fn !== 'apiCall') {
+    const snaked = cleanOperationalFunctionName(fn);
+    if (snaked) return `${snaked}_fetched`;
+  }
+  return null;
+}
+
+function guessRetryName(interaction: RawInteraction): string | null {
+  const entity = pickEntity(interaction.relatedEntities);
+  if (entity) return `${entity}_retried`;
+  const fn = interaction.functionName;
+  if (fn && fn !== 'retryHandler') {
+    const snaked = cleanOperationalFunctionName(fn);
+    if (snaked) return `${snaked}_retried`;
+  }
+  return null;
+}
+
+function guessJobHandlerName(interaction: RawInteraction): string | null {
+  const fn = interaction.functionName;
+  if (fn && fn !== 'jobHandler') {
+    const snaked = fn.replace(/-/g, '_').replace(/\s+/g, '_').toLowerCase();
+    if (snaked && snaked.length >= 3 && !OPERATIONAL_UTIL_NAMES.has(snaked.replace(/_/g, ''))) {
+      return `${snaked}_processed`;
+    }
+  }
+  const entity = pickEntity(interaction.relatedEntities);
+  if (entity) return `${entity}_processed`;
   return null;
 }
 

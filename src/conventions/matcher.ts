@@ -42,9 +42,21 @@ export type ConventionDomain = 'onboarding' | string;
 /**
  * Detect which convention domains are relevant to this codebase
  * by scanning file paths and content for known signals.
+ *
+ * Requires at least 2 distinct signal types (path, component, pattern) before
+ * including a domain — prevents single-string matches like "verify" in a file
+ * path from triggering onboarding conventions in unrelated codebases.
  */
 export function matchConventionsToCodebase(files: FileContent[]): ConventionDomain[] {
-  const matched = new Set<ConventionDomain>();
+  // Track which signal types have fired per domain
+  const hits = new Map<ConventionDomain, Set<string>>();
+
+  function addHit(domain: ConventionDomain, signalType: 'path' | 'component' | 'pattern') {
+    let set = hits.get(domain);
+    if (!set) { set = new Set(); hits.set(domain, set); }
+    set.add(signalType);
+  }
+
   const pathLower = (p: string) => p.toLowerCase().replace(/\\/g, '/');
 
   for (const file of files) {
@@ -52,31 +64,24 @@ export function matchConventionsToCodebase(files: FileContent[]): ConventionDoma
 
     // Onboarding: path signals
     for (const signal of ONBOARDING_SIGNALS.paths) {
-      if (pathStr.includes(signal)) {
-        matched.add('onboarding');
-        break;
-      }
+      if (pathStr.includes(signal)) { addHit('onboarding', 'path'); break; }
     }
 
-    // Onboarding: component names and code patterns
-    if (!matched.has('onboarding')) {
-      const content = file.content;
-      for (const comp of ONBOARDING_SIGNALS.components) {
-        if (content.includes(comp)) {
-          matched.add('onboarding');
-          break;
-        }
-      }
-      if (!matched.has('onboarding')) {
-        for (const pattern of ONBOARDING_SIGNALS.patterns) {
-          if (pattern.test(content)) {
-            matched.add('onboarding');
-            break;
-          }
-        }
-      }
+    const content = file.content;
+    // Onboarding: component names
+    for (const comp of ONBOARDING_SIGNALS.components) {
+      if (content.includes(comp)) { addHit('onboarding', 'component'); break; }
+    }
+    // Onboarding: code patterns
+    for (const pattern of ONBOARDING_SIGNALS.patterns) {
+      if (pattern.test(content)) { addHit('onboarding', 'pattern'); break; }
     }
   }
 
-  return Array.from(matched);
+  // Only include a domain if at least 2 distinct signal types matched
+  const matched: ConventionDomain[] = [];
+  for (const [domain, signalTypes] of hits) {
+    if (signalTypes.size >= 2) matched.push(domain);
+  }
+  return matched;
 }

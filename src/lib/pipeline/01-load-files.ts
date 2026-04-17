@@ -18,6 +18,8 @@ export async function loadCodebaseFiles(
     '**/build/**',
     '**/.git/**',
     '**/coverage/**',
+    '**/conventions/**',
+    '**/.logline/**',
     ...(options?.exclude ?? []),
   ];
 
