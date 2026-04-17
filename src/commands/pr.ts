@@ -8,7 +8,7 @@ import type { DetectedEvent } from '../lib/types';
 import { generateTrackingCode } from '../lib/utils/code-generator';
 import type { TrackingGap } from '../lib/discovery/tracking-gap-detector';
 import { readTrackingPlan, writeTrackingPlan } from '../lib/utils/tracking-plan';
-import { readLoglineConfig } from '../lib/utils/config';
+import { readLoglineConfig, type LoglineConfig } from '../lib/utils/config';
 
 const IGNORED_EVENTS = [
   'sidebar_interacted',
@@ -61,12 +61,18 @@ export async function prCommand(options: PROptions): Promise<void> {
       const lines = content.split('\n');
       const targetLine = getEffectiveTargetLine(content, gap);
 
-      // Generate the tracking code (with context for property mapping, use effective line for param inference)
-      const trackingCode = generateTrackingCode(gap, content, targetLine, { functionName: config.tracking.functionName });
+      // Generate the tracking code (signal-type aware)
+      const loggingConfig = config.logging ?? { importPath: '@/lib/logger', instanceName: 'logger', destination: 'console' as const };
+      const trackingCode = generateTrackingCode(gap, content, targetLine, {
+        functionName: config.tracking.functionName,
+        signalType: gap.signalType,
+        logging: { importPath: loggingConfig.importPath, instanceName: loggingConfig.instanceName },
+      });
 
-      // Show diff preview
+      // Show diff preview with signal type label
+      const signalLabel = signalTypeLabel(gap.signalType);
       console.log('─'.repeat(60));
-      console.log(`📄 ${gap.location.file}:${targetLine}`);
+      console.log(`📄 ${gap.location.file}:${targetLine}${signalLabel}`);
       console.log('─'.repeat(60));
 
       // Show context (3 lines before)
@@ -91,14 +97,28 @@ export async function prCommand(options: PROptions): Promise<void> {
         console.log(`  ${String(i + 1).padStart(3)} │ ${lines[i]}`);
       }
 
-      // Show import if needed
-      const hasImport =
+      // Show analytics import if needed
+      const needsAnalytics = gap.signalType !== 'operation' && gap.signalType !== 'error';
+      const hasAnalyticsImport =
         new RegExp(`\\b${config.tracking.functionName}\\b`).test(content) ||
         content.includes(`from '${config.tracking.importPath}'`) ||
         content.includes(`from "${config.tracking.importPath}"`);
-      if (!hasImport) {
+      if (needsAnalytics && !hasAnalyticsImport) {
         console.log('\n  \x1b[33mImport to add:\x1b[0m');
         console.log(`  \x1b[32m+ import { ${config.tracking.functionName} } from '${config.tracking.importPath}';\x1b[0m`);
+      }
+
+      // Show logger import if needed for operation/error/state_change
+      const needsLogger = gap.signalType === 'operation' || gap.signalType === 'error' || gap.signalType === 'state_change';
+      if (needsLogger) {
+        const lc = config.logging ?? { importPath: '@/lib/logger', instanceName: 'logger' };
+        const hasLoggerImport =
+          content.includes(`from '${lc.importPath}'`) ||
+          content.includes(`from "${lc.importPath}"`);
+        if (!hasLoggerImport) {
+          console.log('\n  \x1b[33mLogger import to add:\x1b[0m');
+          console.log(`  \x1b[32m+ import { ${lc.instanceName} } from '${lc.importPath}';\x1b[0m`);
+        }
       }
 
       console.log();
@@ -151,10 +171,25 @@ export async function prCommand(options: PROptions): Promise<void> {
 
     for (const gap of sorted) {
       const targetLine = getEffectiveTargetLine(content, gap);
-      const trackingCode = generateTrackingCode(gap, content, targetLine, { functionName: config.tracking.functionName });
+      const lc = config.logging ?? { importPath: '@/lib/logger', instanceName: 'logger', destination: 'console' as const };
+      const trackingCode = generateTrackingCode(gap, content, targetLine, {
+        functionName: config.tracking.functionName,
+        signalType: gap.signalType,
+        logging: { importPath: lc.importPath, instanceName: lc.instanceName },
+      });
       content = insertTracking(content, targetLine, trackingCode);
-      content = ensureTrackImport(content, relativePath, config.tracking.importPath, config.tracking.functionName);
-      console.log(`  ✓ ${gap.suggestedEvent} added to ${relativePath}`);
+
+      // Analytics import (action / state_change)
+      if (gap.signalType !== 'operation' && gap.signalType !== 'error') {
+        content = ensureTrackImport(content, relativePath, config.tracking.importPath, config.tracking.functionName);
+      }
+      // Logger import (operation / error / state_change)
+      if (gap.signalType === 'operation' || gap.signalType === 'error' || gap.signalType === 'state_change') {
+        content = ensureTrackImport(content, relativePath, lc.importPath, lc.instanceName);
+      }
+
+      const label = signalTypeLabel(gap.signalType);
+      console.log(`  ✓ ${gap.suggestedEvent}${label} added to ${relativePath}`);
     }
 
     fs.writeFileSync(filePath, content);
@@ -163,6 +198,14 @@ export async function prCommand(options: PROptions): Promise<void> {
 
   // Ensure analytics module exists
   ensureAnalyticsModule(cwd, config.tracking.functionName);
+
+  // Ensure logger module exists if any operational signals were added
+  const hasOperationalSignals = gaps.some(
+    (g) => g.signalType === 'operation' || g.signalType === 'error' || g.signalType === 'state_change'
+  );
+  if (hasOperationalSignals) {
+    ensureLoggerModule(cwd, config);
+  }
 
   // Commit changes
   console.log('\n📝 Committing changes...');
@@ -249,6 +292,7 @@ async function loadScanResult(cwd: string): Promise<ScanResult> {
       location: e.locations[0] ?? { file: 'unknown', line: 0 },
       confidence: 0.8,
       priority: e.priority,
+      signalType: e.signalType,
       description: e.description,
       includes: e.includes,
     }));
@@ -446,6 +490,68 @@ export function ${functionName}(eventName: string, properties: Record<string, un
   );
 
   console.log('  ✓ Created src/lib/analytics.ts');
+}
+
+function signalTypeLabel(signalType?: string): string {
+  switch (signalType) {
+    case 'action': return ' (action → track())';
+    case 'operation': return ' (operation → logger.info())';
+    case 'error': return ' (error → logger.error())';
+    case 'state_change': return ' (state_change → track() + logger.info())';
+    default: return '';
+  }
+}
+
+function ensureLoggerModule(cwd: string, config: LoglineConfig): void {
+  const loggingConfig = config.logging;
+  const instanceName = loggingConfig?.instanceName ?? 'logger';
+  const loggerPath = path.join(cwd, 'src', 'lib', 'logger.ts');
+
+  if (fs.existsSync(loggerPath)) return;
+
+  const dir = path.dirname(loggerPath);
+  fs.mkdirSync(dir, { recursive: true });
+
+  let template: string;
+  switch (loggingConfig?.destination) {
+    case 'pino':
+      template = `// Logger module generated by Logline
+import pino from 'pino';
+
+export const ${instanceName} = pino({ level: process.env.LOG_LEVEL ?? 'info' });
+`;
+      break;
+    case 'winston':
+      template = `// Logger module generated by Logline
+import winston from 'winston';
+
+export const ${instanceName} = winston.createLogger({
+  level: process.env.LOG_LEVEL ?? 'info',
+  format: winston.format.json(),
+  transports: [new winston.transports.Console()],
+});
+`;
+      break;
+    default:
+      template = `// Logger module generated by Logline
+// Replace with pino, winston, or your preferred structured logger.
+
+export const ${instanceName} = {
+  info(event: string, context: Record<string, unknown> = {}): void {
+    console.log(JSON.stringify({ level: 'info', event, ...context, timestamp: new Date().toISOString() }));
+  },
+  warn(event: string, context: Record<string, unknown> = {}): void {
+    console.warn(JSON.stringify({ level: 'warn', event, ...context, timestamp: new Date().toISOString() }));
+  },
+  error(event: string, context: Record<string, unknown> = {}): void {
+    console.error(JSON.stringify({ level: 'error', event, ...context, timestamp: new Date().toISOString() }));
+  },
+};
+`;
+  }
+
+  fs.writeFileSync(loggerPath, template);
+  console.log('  ✓ Created src/lib/logger.ts');
 }
 
 function escapeRegExp(str: string): string {

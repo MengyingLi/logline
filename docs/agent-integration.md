@@ -104,3 +104,39 @@ git add .logline/tracking-plan.json
 ```
 
 The plan's `id` field for each event is a stable hash of the event name — same name always produces the same ID, so the plan merges cleanly across runs.
+
+## Signal type routing
+
+Each event in the tracking plan has a `signalType` field. Agents can use this to understand the nature of each signal and prioritize accordingly:
+
+- **`action`** signals answer "what did the user do?" — useful for product analytics, funnel analysis, and user behavior modeling
+- **`operation`** signals answer "what did the system do?" — useful for debugging, latency analysis, and infrastructure observability
+- **`error`** signals answer "what went wrong?" — useful for incident response, root cause analysis, and reliability tracking
+- **`state_change`** signals answer "how did entities transition?" — useful for lifecycle analysis, cohort segmentation, and anomaly detection
+
+### Triage strategy for agents
+
+When an agent receives a stream of events, `signalType` enables systematic triage:
+
+```python
+events = json.loads(open(".logline/tracking-plan.json").read())["events"]
+
+# Group by signal type for analysis
+by_signal = {}
+for e in events:
+    sig = e.get("signalType", "action")
+    by_signal.setdefault(sig, []).append(e["name"])
+
+# An agent investigating an incident can:
+# 1. Start with error signals → what failed?
+errors = by_signal.get("error", [])
+# 2. Correlate with operation signals → what was the system doing?
+ops = by_signal.get("operation", [])
+# 3. Use action signals → what was the user trying to do?
+actions = by_signal.get("action", [])
+# 4. Use state_change signals → what lifecycle transitions occurred?
+states = by_signal.get("state_change", [])
+```
+
+Because `action` and `state_change` signals go to analytics while `operation` and `error` go to structured logging, an agent can join across both data stores using the shared event name and timestamp.
+

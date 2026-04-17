@@ -40,6 +40,7 @@
   "action": "configured",
   "priority": "high",
   "status": "suggested",
+  "signalType": "action",
   "properties": [...],
   "locations": [{ "file": "src/components/StepConfigPanel.tsx", "line": 25 }],
   "includes": ["mapping_added", "trigger_selected"],
@@ -47,6 +48,21 @@
   "lastSeen": "2026-03-27T00:00:00.000Z"
 }
 ```
+
+### signalType
+
+Type: `'action' | 'operation' | 'state_change' | 'error'`
+
+Routes the signal to the correct destination and determines what code `logline pr` generates:
+
+| Value | Generated code | Destination |
+|-------|---------------|-------------|
+| `action` | `track('event_name', {...})` | Analytics (Segment, PostHog, Mixpanel) |
+| `operation` | `logger.info('event_name', {...})` | Logging / monitoring (Datadog, Grafana) |
+| `state_change` | Both `track()` and `logger.info()` | Analytics + logging |
+| `error` | `logger.error('event_name', {...})` | Logging + alerting |
+
+Set automatically by `logline spec` based on the interaction type detected. Can be overridden manually.
 
 ### status lifecycle
 
