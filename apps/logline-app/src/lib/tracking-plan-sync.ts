@@ -1,4 +1,4 @@
-import type { TrackingPlan } from '@logline/cli';
+import type { TrackingPlan } from 'logline-cli';
 
 export async function syncTrackingPlan(args: {
   octokit: any;

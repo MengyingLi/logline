@@ -24,11 +24,11 @@ Every product analytics stack has the same gap: events arrive, but nothing tells
 
 ```bash
 # Run once via npx (published package)
-npx @logline/cli init
-npx @logline/cli scan --fast
+npx logline-cli init
+npx logline-cli scan --fast
 
 # Or install globally
-npm install -g @logline/cli
+npm install -g logline-cli
 logline scan --fast
 
 # Until published in your environment: clone + build + link
@@ -299,7 +299,7 @@ cd /path/to/test-project && logline doctor
 
 **Q: I get "command not found" after `npm install -g logline`.**
 
-The unscoped `logline` package is different. Use `@logline/cli`.
+The unscoped `logline` package is different. Use `logline-cli`.
 
 **Q: Does it work without OpenAI?**
 

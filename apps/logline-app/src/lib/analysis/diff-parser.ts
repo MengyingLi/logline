@@ -1,4 +1,4 @@
-import type { FileContent } from '@logline/cli';
+import type { FileContent } from 'logline-cli';
 import type { Octokit } from 'octokit';
 import type { DiffFile } from '@/types';
 

@@ -1,4 +1,4 @@
-import { generateTrackingCode, type SynthesizedEvent } from '@logline/cli';
+import { generateTrackingCode, type SynthesizedEvent } from 'logline-cli';
 import { buildSuggestionComment } from './templates';
 import type { DiffFile } from '@/types';
 

@@ -4,7 +4,7 @@ import {
   type FileContent,
   type RawInteraction,
   type ProductProfile,
-} from '@logline/cli';
+} from 'logline-cli';
 import { getInstallationOctokit } from '@/lib/github';
 import { parsePRDiff } from './diff-parser';
 import { postReview } from '@/lib/comments/review-builder';

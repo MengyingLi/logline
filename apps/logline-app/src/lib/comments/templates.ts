@@ -1,4 +1,4 @@
-import type { SynthesizedEvent } from '@logline/cli';
+import type { SynthesizedEvent } from 'logline-cli';
 
 export function buildSuggestionComment(event: SynthesizedEvent, trackingCode: string): string {
   return `### 📊 Logline: Track \`${event.name}\`

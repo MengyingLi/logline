@@ -1,5 +1,5 @@
 /**
- * @logline/cli — Programmatic API
+ * logline-cli — Programmatic API
  *
  * Use this to integrate Logline's analysis engine into other tools
  * (GitHub Apps, CI pipelines, editor plugins, etc.)

@@ -1,17 +1,17 @@
-# Programmatic API (`@logline/cli`)
+# Programmatic API (`logline-cli`)
 
-`@logline/cli` can be used as a library by GitHub Apps, CI jobs, and internal tools.
+`logline-cli` can be used as a library by GitHub Apps, CI jobs, and internal tools.
 
 ## Install
 
 ```bash
-npm install @logline/cli
+npm install logline-cli
 ```
 
 ## Example: Run a Scan
 
 ```ts
-import { scanCommand } from '@logline/cli';
+import { scanCommand } from 'logline-cli';
 
 const result = await scanCommand({
   cwd: '/path/to/repo',
@@ -30,7 +30,7 @@ import {
   detectInteractions,
   synthesizeEvents,
   extractContext,
-} from '@logline/cli';
+} from 'logline-cli';
 
 const files = await loadCodebaseFiles('/path/to/repo');
 const interactions = detectInteractions(files);

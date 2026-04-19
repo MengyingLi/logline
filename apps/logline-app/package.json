@@ -9,7 +9,7 @@
     "start": "next start"
   },
   "dependencies": {
-    "@logline/cli": "file:../..",
+    "logline-cli": "file:../..",
     "@octokit/webhooks": "^13.3.0",
     "next": "^15.0.0",
     "octokit": "^4.0.2",
