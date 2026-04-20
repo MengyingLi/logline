@@ -2,6 +2,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
+import pkg from '../package.json';
 import { initCommand } from './commands/init';
 import { scanCommand } from './commands/scan';
 import { specCommand } from './commands/spec';
@@ -19,7 +20,7 @@ const program = new Command();
 program
   .name('logline')
   .description('Logline — semantic layer for product analytics. Generates tracking plans from codebases.')
-  .version('0.1.0');
+  .version(pkg.version);
 
 program
   .command('init')
