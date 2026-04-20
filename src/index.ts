@@ -40,7 +40,7 @@ export { generateMetrics } from './lib/context/metric-generator';
 export { generateExpectedSequences } from './lib/context/expected-sequence';
 
 // Code generation
-export { generateTrackingCode, analyzeCodeContext } from './lib/utils/code-generator';
+export { generateTrackingCode } from './lib/utils/code-generator';
 export { analyzeScope } from './lib/utils/scope-analyzer';
 
 // Types

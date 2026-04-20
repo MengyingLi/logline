@@ -77,16 +77,7 @@ export interface EventSuggestion {
 
 export interface EpisodicMemory {
   prContext: PRContext;
-  interactions: AgentInteraction[];
   feedback: DeveloperFeedback[];
-  timestamp: Date;
-}
-
-export interface AgentInteraction {
-  action: string;
-  reasoning: string;
-  toolCalls: ToolCall[];
-  result: any;
   timestamp: Date;
 }
 
@@ -95,64 +86,6 @@ export interface DeveloperFeedback {
   eventSuggestion: EventSuggestion;
   comments?: string;
   timestamp: Date;
-}
-
-export interface ToolCall {
-  tool: string;
-  parameters: Record<string, any>;
-  result?: any;
-  timestamp: Date;
-}
-
-export interface LoggingPattern {
-  framework: string;
-  importPattern: string;
-  callPattern: string;
-  examples: string[];
-  frequency: number;
-}
-
-export interface StylePreferences {
-  eventNaming: 'snake_case' | 'camelCase' | 'kebab-case';
-  propertyNaming: 'snake_case' | 'camelCase';
-  quoteStyle: 'single' | 'double';
-  indentStyle: 'spaces' | 'tabs';
-  indentSize: number;
-}
-
-export interface DomainKnowledge {
-  domain: 'saas' | 'ecommerce' | 'fintech' | 'other';
-  entities: Entity[];
-  commonMetrics: string[];
-  thirdPartyTools: string[];
-}
-
-export interface EntityState {
-  state: string;
-  transitions: StateTransition[];
-}
-
-export interface StateTransition {
-  to: string;
-  trigger: string;
-}
-
-export interface Entity {
-  name: string;
-  lifecycle: EntityState[];
-  actions: string[];
-  properties: EventProperty[];
-}
-
-export interface SemanticMemory {
-  repoId: string;
-  loggingPatterns: LoggingPattern[];
-  stylePreferences: StylePreferences;
-  domainKnowledge: DomainKnowledge;
-  updatedAt: Date;
-  productCategory?: string;
-  productCategoryConfidence?: number;
-  initialEventInventory?: DiscoveredEvent[];
 }
 
 // ─── Actor / Object Classification ───
@@ -179,56 +112,10 @@ export interface TrackedObject {
   needsReview?: boolean;
 }
 
-export interface DualClassification {
-  name: string;
-  classification: 'both';
-  asActor: {
-    type: 'user' | 'system' | 'integration';
-    canPerformActions: string[];
-    identifierPattern?: string;
-  };
-  asObject: {
-    lifecycleStates: string[];
-    belongsTo: string[];
-    properties: string[];
-  };
-  source: 'typescript' | 'prisma' | 'database' | 'inferred';
-  confidence?: number;
-  needsReview?: boolean;
-}
-
 // ─── Interaction Types ───
 
 export interface ActorToObjectInteraction {
   actor: string;
-  action: string;
-  object: string;
-  suggestedEvent: string;
-  location?: CodeLocation;
-  confidence?: number;
-}
-
-export interface ActorToActorInteraction {
-  actor: string;
-  action: string;
-  targetActor: string;
-  suggestedEvent: string;
-  location?: CodeLocation;
-  confidence?: number;
-}
-
-export interface ActorToActorViaObjectInteraction {
-  actor: string;
-  action: string;
-  targetActor: string;
-  object: string;
-  suggestedEvent: string;
-  location?: CodeLocation;
-  confidence?: number;
-}
-
-export interface SystemToObjectInteraction {
-  trigger: string;
   action: string;
   object: string;
   suggestedEvent: string;
@@ -258,27 +145,7 @@ export interface ExpectedSequence {
 
 export interface InteractionTypes {
   actorToObject: ActorToObjectInteraction[];
-  actorToActor: ActorToActorInteraction[];
-  actorToActorViaObject: ActorToActorViaObjectInteraction[];
-  systemToObject: SystemToObjectInteraction[];
   objectToObject: ObjectToObjectRelationship[];
-}
-
-// ─── Bulk Actions & Context ───
-
-export interface BulkAction {
-  action: string;
-  object: string;
-  location: CodeLocation;
-  loggingRecommendation: 'single_event_with_count' | 'per_object_event';
-  suggestedEvent: string;
-  confidence?: number;
-}
-
-export interface ContextProperty {
-  object: string;
-  requiredContext: string[];
-  reason: string;
 }
 
 // ─── Lifecycle ───
@@ -295,16 +162,6 @@ export interface ObjectLifecycle {
   transitions: LifecycleStateTransition[];
 }
 
-export interface ActorObjectExtractionResult {
-  actors: Actor[];
-  objects: TrackedObject[];
-  dualClassifications: DualClassification[];
-  interactions: InteractionTypes;
-  bulkActions: BulkAction[];
-  contextProperties: ContextProperty[];
-  lifecycles: ObjectLifecycle[];
-}
-
 // ─── Signal Types ───
 
 /**
@@ -315,177 +172,6 @@ export interface ActorObjectExtractionResult {
  * - error        → logger.error()   → logging + alerts
  */
 export type SignalType = 'action' | 'operation' | 'state_change' | 'error';
-
-// ─── Tracking Gap Types ───
-
-export type GapType = 'product_analytics' | 'operational';
-export type GapCategory =
-  | 'failure_recovery'
-  | 'unobservable_behavior'
-  | 'business_critical'
-  | 'state_transition'
-  | 'decision_point';
-export type GapPriority = 'high' | 'medium' | 'low';
-
-export interface TrackingGapRich {
-  action: string;
-  entity: string;
-  suggestedEvent: string;
-  location: CodeLocation;
-  reason: string;
-  confidence?: number;
-  needsReview?: boolean;
-  gapType?: GapType;
-  category?: GapCategory;
-  priority?: GapPriority;
-}
-
-// ─── Event Schema Patterns ───
-
-export interface EventSchemaPatterns {
-  commonProperties: Array<{ name: string; frequency: number; percentage: number }>;
-  propertyPatterns: {
-    userIdPattern?: string;
-    timestampPattern?: string;
-    identifierPatterns: string[];
-  };
-  namingConvention: 'snake_case' | 'camelCase' | 'kebab-case' | 'mixed';
-  averagePropertyCount: number;
-}
-
-// ─── Reasoning Types ───
-
-export interface ReasoningStep {
-  step: number;
-  action: string;
-  reasoning: string;
-  evidence: string[];
-  confidence: number;
-}
-
-export interface Plan {
-  steps: ReasoningStep[];
-  goal: string;
-  context: string;
-}
-
-// ─── SaaS Domain Types ───
-
-export interface SaaSEvent {
-  name: string;
-  category: 'activation' | 'engagement' | 'retention' | 'revenue' | 'churn' | 'general';
-  required: boolean;
-  properties: EventProperty[];
-  entity: string;
-  metric: string;
-  triggerHints?: string[];
-}
-
-export interface CodebaseGraphNode {
-  id: string;
-  type: 'file' | 'function' | 'component' | 'route' | 'entity';
-  name: string;
-  file?: string;
-  relationships: CodebaseGraphEdge[];
-  metadata: Record<string, any>;
-}
-
-export interface CodebaseGraphEdge {
-  target: string;
-  type: 'imports' | 'calls' | 'uses' | 'depends_on';
-  weight?: number;
-}
-
-// ─── Agent Action Types ───
-
-export type AgentAction =
-  | { type: 'suggest_events'; events: EventSuggestion[] }
-  | { type: 'generate_code'; event: EventSuggestion; code: string }
-  | { type: 'request_feedback'; question: string }
-  | { type: 'commit_code'; file: string; code: string }
-  | { type: 'analyze_diff'; diff: string };
-
-export interface AgentResponse {
-  action: AgentAction;
-  reasoning: string;
-  confidence: number;
-  alternatives?: AgentAction[];
-}
-
-// ─── Hybrid Event Discovery ───
-
-export interface DiscoveredEvent {
-  name: string;
-  properties: string[];
-  locations: CodeLocation[];
-  source: 'codebase' | 'config';
-  framework?: string;
-  exampleCode?: string;
-  importance?: 'core' | 'secondary' | 'utility';
-  importanceReason?: string;
-}
-
-export interface FeatureGoals {
-  functionality?: string;
-  businessGoal?: string;
-  metrics?: string;
-}
-
-export interface ReasoningResult {
-  prIntent: string;
-  featureGoals?: FeatureGoals;
-  reusableEvents: ReusableEvent[];
-  affectedEntity: Entity | null;
-  matchedPattern: EventPatternMatch | null;
-  suggestedEvents: SuggestedEventFromReasoning[];
-}
-
-export interface ReusableEvent {
-  existingEvent: DiscoveredEvent;
-  suggestion: string;
-  confidence: number;
-}
-
-export interface EventPatternMatch {
-  pattern: string;
-  event: SaaSEvent;
-  confidence: number;
-}
-
-export interface SuggestedEventFromReasoning {
-  eventName: string;
-  properties: EventProperty[];
-  rationale: string;
-  source: 'reuse' | 'pattern' | 'general';
-  entity?: string;
-  metric?: string;
-  filePath?: string;
-  diffLine?: number;
-  suggestedCode?: string;
-  triggerContext?: string;
-}
-
-export interface EventPattern {
-  pattern: RegExp | string;
-  event: SaaSEvent;
-  confidence: number;
-}
-
-export interface ICodeIndexer {
-  search(query: string, topK?: number): Promise<Array<{
-    chunk: { type: string; file: string; code: string; id: string };
-    score: number;
-  }>>;
-  indexFiles(files: Array<{ path: string; content: string }>, codebasePath?: string): Promise<{
-    codebasePath: string;
-    totalFiles: number;
-    totalChunks: number;
-    fileChunks: number;
-    functionChunks: number;
-    indexedAt: string;
-    embeddingModel: string;
-  }>;
-}
 
 // ─── Tracking Plan Format ───
 

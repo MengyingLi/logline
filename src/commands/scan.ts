@@ -129,7 +129,7 @@ export async function scanCommand(options: {
   const context = extractContext(files);
   if (contextSpinner) contextSpinner.succeed(`Context: ${context.objects.length} objects, ${context.actors.length} actors`);
 
-  // Stage 5: Synthesize events (temporary regex-based; Day 4 adds LLM)
+  // Stage 5: Synthesize events (regex fast mode or LLM)
   const synthSpinner = spinnersEnabled ? ora('Synthesizing business events...').start() : null;
   const synthesized = await synthesizeEvents(interactions, profile, {
     fast: options.fast,

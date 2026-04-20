@@ -2,15 +2,6 @@ import type { TrackingGap } from '../discovery/tracking-gap-detector';
 import type { SignalType } from '../types';
 import { analyzeScope, type ScopeVariable } from './scope-analyzer';
 
-export interface CodeContext {
-  availableVariables: Map<string, string>;
-  componentProps: string[];
-  stateVariables: string[];
-  hasAuthContext: boolean;
-  hasUserSession: boolean;
-  handlerSignature?: string;
-}
-
 export function generateTrackingCode(
   gap: TrackingGap,
   fileContent?: string,
@@ -60,100 +51,6 @@ ${propsStr}
 ${fn}('${gap.suggestedEvent}', {
 ${propsStr}
 });`;
-}
-
-export function analyzeCodeContext(content: string, targetLine: number): CodeContext {
-  const lines = content.split('\n');
-  const context: CodeContext = {
-    availableVariables: new Map(),
-    componentProps: [],
-    stateVariables: [],
-    hasAuthContext: false,
-    hasUserSession: false,
-  };
-
-  // 1. Props destructuring: const { workflow, user } = props
-  const propsMatch = content.match(/const\s*\{([^}]+)\}\s*=\s*props/);
-  if (propsMatch) {
-    context.componentProps = propsMatch[1]
-      .split(',')
-      .map((s) => s.trim().split(':')[0].trim())
-      .filter(Boolean);
-    for (const p of context.componentProps) {
-      context.availableVariables.set(p, 'props');
-    }
-  }
-
-  // 2. useState: const [workflow, setWorkflow] = useState
-  const stateMatches = content.matchAll(/const\s*\[(\w+),\s*set\w+\]\s*=\s*useState/g);
-  for (const m of stateMatches) {
-    context.stateVariables.push(m[1]);
-    context.availableVariables.set(m[1], 'state');
-  }
-
-  // 3. Function params: handleWorkflow(workflow), (step: Step) =>
-  const paramMatches = content.matchAll(/\(([^)]*)\)\s*=>|function\s+\w+\s*\(([^)]*)\)/g);
-  for (const m of paramMatches) {
-    const params = (m[1] || m[2] || '')
-      .split(',')
-      .map((s) => s.trim().split(':')[0].trim().split('=')[0].trim())
-      .filter(Boolean);
-    for (const p of params) {
-      context.availableVariables.set(p, 'param');
-    }
-  }
-
-  // 4. Auth/session hooks
-  if (content.includes('useAuth') || content.includes('useSession') || content.includes('useUser')) {
-    context.hasAuthContext = true;
-  }
-  if (
-    content.includes('session') ||
-    content.includes('currentUser') ||
-    content.includes('user?.') ||
-    content.includes('user?.id')
-  ) {
-    context.hasUserSession = true;
-  }
-
-  // 5. Look for object variables near target line
-  const nearbyLines = lines
-    .slice(Math.max(0, targetLine - 50), targetLine + 10)
-    .join('\n');
-
-  if (
-    nearbyLines.includes('workflow.') ||
-    nearbyLines.includes('workflow?.') ||
-    nearbyLines.includes('workflow?.id')
-  ) {
-    context.availableVariables.set('workflow', 'object');
-  }
-  if (
-    nearbyLines.includes('step.') ||
-    nearbyLines.includes('step?.') ||
-    nearbyLines.includes('selectedStep') ||
-    nearbyLines.includes('(step:')
-  ) {
-    context.availableVariables.set('step', 'object');
-  }
-  if (nearbyLines.includes('template.') || nearbyLines.includes('template?.') || nearbyLines.includes('(template:')) {
-    context.availableVariables.set('template', 'object');
-  }
-  if (
-    nearbyLines.includes('trigger') ||
-    nearbyLines.includes('workflow.trigger') ||
-    nearbyLines.includes('handleTriggerSelect')
-  ) {
-    context.availableVariables.set('trigger', 'object');
-  }
-
-  // 6. Handler signature for param inference (at effective target line)
-  const handlerLineIndex = targetLine > 0 ? targetLine - 1 : 0;
-  if (handlerLineIndex < lines.length) {
-    context.handlerSignature = lines[handlerLineIndex] ?? '';
-  }
-
-  return context;
 }
 
 function inferProperties(
@@ -208,13 +105,12 @@ function inferProperties(
     props.push({ name: `${objectName}_${param.name}`, value: param.accessPath, todo: false });
   }
 
-  // 4) workflow_name if we actually have workflow in scope
-  if (objectName.includes('workflow')) {
-    const workflowVar = findObjectVariable(scope, 'workflow');
+  // 4) _name property when object has 'name' in scope
+  if (objectVar && objectVar.properties?.includes('name')) {
     props.push({
-      name: 'workflow_name',
-      value: `${workflowVar?.accessPath ?? 'workflow'}?.name`,
-      todo: !workflowVar,
+      name: `${objectName}_name`,
+      value: `${objectVar.accessPath}.name`,
+      todo: false,
     });
   }
 
