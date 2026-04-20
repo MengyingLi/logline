@@ -3,6 +3,17 @@ import * as path from 'path';
 import chalk from 'chalk';
 import { createEmptyTrackingPlan, writeTrackingPlan, getTrackingPlanPath } from '../lib/utils/tracking-plan';
 
+function detectSourceDirs(cwd: string): string[] {
+  const exts = ['ts', 'tsx', 'js', 'jsx'];
+  const candidates = ['src', 'app', 'apps', 'pages', 'lib', 'packages'];
+  const found = candidates.filter((d) => fs.existsSync(path.join(cwd, d)));
+  if (found.length === 0) {
+    // Fallback: scan everything (load-files already ignores node_modules etc.)
+    return exts.map((e) => `**/*.${e}`);
+  }
+  return found.flatMap((d) => exts.map((e) => `${d}/**/*.${e}`));
+}
+
 export async function initCommand(options: { cwd?: string }): Promise<void> {
   const cwd = options.cwd ?? process.cwd();
   const loglineDir = path.join(cwd, '.logline');
@@ -15,6 +26,7 @@ export async function initCommand(options: { cwd?: string }): Promise<void> {
 
   // 2. Create config.json if it doesn't exist (don't overwrite)
   if (!fs.existsSync(configPath)) {
+    const include = detectSourceDirs(cwd);
     const defaultConfig = {
       eventGranularity: 'business',
       tracking: {
@@ -23,7 +35,7 @@ export async function initCommand(options: { cwd?: string }): Promise<void> {
         functionName: 'track',
       },
       scan: {
-        include: ['src/**/*.ts', 'src/**/*.tsx', 'src/**/*.js', 'src/**/*.jsx'],
+        include,
         exclude: ['**/*.test.*', '**/*.spec.*', '**/node_modules/**'],
       },
     };

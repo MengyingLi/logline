@@ -16,6 +16,9 @@ export function isValidEventName(name: string): boolean {
     return false;
   }
 
+  // Must only contain lowercase letters, digits, underscores
+  if (!/^[a-z][a-z0-9_]*$/.test(name)) return false;
+
   // Must be object_verb format with actual object
   const parts = name.split('_').filter(Boolean);
   if (parts.length < 2) return false;

@@ -625,15 +625,16 @@ function extractEntitiesFromContext(context: string): string[] {
 }
 
 function extractEntitiesFromURL(url: string): string[] {
-  return url
+  const cleanUrl = url.split('?')[0]; // strip query string
+  return cleanUrl
     .split('/')
-    .filter((p) => p && !p.startsWith(':') && !p.startsWith('{'))
-    .filter((p) => !/^https?:$/.test(p))   // strip protocol segments
-    .filter((p) => !p.includes('.'))         // strip hostnames (api.example.com)
+    .filter((p) => p && !p.startsWith(':') && !p.startsWith('{') && !p.includes('$'))
+    .filter((p) => !/^https?:$/.test(p))
+    .filter((p) => !p.includes('.'))
     .filter((p) => !['api', 'v1', 'v2', 'v3'].includes(p))
     .flatMap((p) => p.replace(/-/g, '_').split('_'))
     .map((p) => p.replace(/s$/, ''))
-    .filter((p) => p.length >= 3 && !/^\d+$/.test(p))
+    .filter((p) => p.length >= 3 && !/^\d+$/.test(p) && /^[a-z0-9]+$/i.test(p))
     .slice(0, 3);
 }
 

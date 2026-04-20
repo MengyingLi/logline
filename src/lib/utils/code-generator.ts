@@ -76,17 +76,19 @@ function inferProperties(
     props.push({ name: `${objectName}_id`, value: `${objectName}?.id`, todo: true });
   }
 
-  // 2) User/auth variable
-  const userVar = findUserVariable(scope);
-  if (userVar) {
-    const isSession = userVar.name === 'session';
-    props.push({
-      name: 'user_id',
-      value: isSession ? `${userVar.accessPath}?.user?.id` : `${userVar.accessPath}?.id`,
-      todo: false,
-    });
-  } else {
-    props.push({ name: 'user_id', value: 'user?.id', todo: true });
+  // 2) User/auth variable (skip if the object IS the user — would duplicate user_id)
+  if (objectName !== 'user') {
+    const userVar = findUserVariable(scope);
+    if (userVar) {
+      const isSession = userVar.name === 'session';
+      props.push({
+        name: 'user_id',
+        value: isSession ? `${userVar.accessPath}?.user?.id` : `${userVar.accessPath}?.id`,
+        todo: false,
+      });
+    } else {
+      props.push({ name: 'user_id', value: 'user?.id', todo: true });
+    }
   }
 
   // 3) Extra context from parameters (type/status-like)
@@ -133,7 +135,9 @@ function inferPropertiesFallback(gap: TrackingGap): Array<{ name: string; value:
   if (objectName !== 'unknown') {
     props.push({ name: `${objectName}_id`, value: `${objectName}?.id`, todo: true });
   }
-  props.push({ name: 'user_id', value: 'user?.id', todo: true });
+  if (objectName !== 'user') {
+    props.push({ name: 'user_id', value: 'user?.id', todo: true });
+  }
   if (gap.suggestedEvent.endsWith('_edited') && gap.includes?.length) {
     props.push({
       name: 'changes',
