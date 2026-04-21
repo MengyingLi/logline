@@ -1,5 +1,8 @@
 # Logline
 
+[![npm version](https://img.shields.io/npm/v/logline-cli.svg)](https://www.npmjs.com/package/logline-cli)
+[![CI](https://github.com/MengyingLi/logline/actions/workflows/ci.yml/badge.svg)](https://github.com/MengyingLi/logline/actions)
+
 **Semantic layer for product analytics.** Logline scans your codebase, understands your product's domain, and generates a machine-readable tracking plan — the contract between your product code, data pipelines, and AI agents.
 
 ```
@@ -23,17 +26,11 @@ Every product analytics stack has the same gap: events arrive, but nothing tells
 ## Quick Start
 
 ```bash
-# Run once via npx (published package)
-npx logline-cli init
-npx logline-cli scan --fast
-
-# Or install globally
+# Install globally
 npm install -g logline-cli
-logline scan --fast
 
-# Until published in your environment: clone + build + link
-git clone https://github.com/MengyingLi/logline
-cd logline && npm install && npm run build && npm link
+# Or run once via npx
+npx logline-cli init
 
 # Set your OpenAI API key (skip for --fast mode)
 export OPENAI_API_KEY=sk-...
@@ -41,10 +38,17 @@ export OPENAI_API_KEY=sk-...
 # Run in your project
 cd /path/to/your-project
 logline init           # initialize .logline/
-logline scan           # detect missing events
+logline scan --fast    # detect missing events (no API key needed)
 logline spec           # write .logline/tracking-plan.json
 logline pr --dry-run   # preview instrumentation
 logline pr             # create PR
+```
+
+### Development
+
+```bash
+git clone https://github.com/MengyingLi/logline
+cd logline && npm install && npm run build && npm link
 ```
 
 ## Example Output
