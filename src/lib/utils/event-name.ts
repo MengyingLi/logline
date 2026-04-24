@@ -35,6 +35,9 @@ export function isValidEventName(name: string): boolean {
   // Avoid "x_action" style placeholders
   if (object.length < 3) return false;
 
+  // Object part longer than 30 chars is likely garbage from inline expression parsing
+  if (object.length > 30) return false;
+
   return true;
 }
 
@@ -47,6 +50,10 @@ const IGNORED_EVENTS = [
   /^blur_/,
   /^hover_/,
   /^resize_/,
+  /^toast/,      // shadcn/radix toast internals
+  /^sidebar_/,   // layout, not business
+  /^dialog_/,    // UI state, not business
+  /^modal_/,     // UI state, not business
 ];
 
 export function isBusinessEvent(eventName: string): boolean {

@@ -572,25 +572,47 @@ function guessFromUiHint(interaction: RawInteraction): string | null {
   return candidate;
 }
 
+const CREATION_VERBS = new Set(['created', 'added', 'inserted']);
+const DELETION_VERBS = new Set(['deleted', 'removed', 'destroyed']);
+
+function canonicalVerbKey(verb: string): string {
+  if (CREATION_VERBS.has(verb)) return 'created';
+  if (DELETION_VERBS.has(verb)) return 'deleted';
+  return verb;
+}
+
+function mergeInto(target: Map<string, SynthesizedEvent>, key: string, event: SynthesizedEvent): void {
+  const existing = target.get(key);
+  if (!existing) {
+    target.set(key, event);
+  } else if ((event.location.confidence ?? 0) > (existing.location.confidence ?? 0)) {
+    target.set(key, {
+      ...event,
+      sourceInteractions: [...new Set([...existing.sourceInteractions, ...event.sourceInteractions])],
+    });
+  } else {
+    existing.sourceInteractions = [...new Set([...existing.sourceInteractions, ...event.sourceInteractions])];
+  }
+}
+
 function deduplicateEvents(events: SynthesizedEvent[]): SynthesizedEvent[] {
+  // Pass 1: exact name deduplication
   const byName = new Map<string, SynthesizedEvent>();
   for (const event of events) {
-    const key = event.name.toLowerCase();
-    const existing = byName.get(key);
-    if (!existing) {
-      byName.set(key, event);
-    } else {
-      // Keep higher confidence; merge sourceInteractions
-      if ((event.location.confidence ?? 0) > (existing.location.confidence ?? 0)) {
-        byName.set(key, {
-          ...event,
-          sourceInteractions: [...new Set([...existing.sourceInteractions, ...event.sourceInteractions])],
-        });
-      } else {
-        existing.sourceInteractions = [...new Set([...existing.sourceInteractions, ...event.sourceInteractions])];
-      }
-    }
+    mergeInto(byName, event.name.toLowerCase(), event);
   }
-  return Array.from(byName.values());
+
+  // Pass 2: synonym-verb deduplication
+  // e.g. comment_created and comment_added → keep higher-confidence one
+  const bySynonym = new Map<string, SynthesizedEvent>();
+  for (const event of byName.values()) {
+    const parts = event.name.split('_');
+    const verb = parts[parts.length - 1];
+    const object = parts.slice(0, -1).join('_');
+    const synKey = `${object}:${canonicalVerbKey(verb)}`;
+    mergeInto(bySynonym, synKey, event);
+  }
+
+  return Array.from(bySynonym.values());
 }
 

@@ -62,7 +62,7 @@ function detectUITriggers(file: FileContent, content: string, lines: string[]): 
     if (isInsideStringOrComment(content, m.index)) continue;
     const eventKind = m[1];
     const expr = m[2].trim();
-    const handlerName = extractHandlerName(expr) ?? expr.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 30);
+    const handlerName = extractHandlerName(expr);
     if (!handlerName) continue;
 
     const type = typeMap[eventKind] ?? 'click_handler';
@@ -481,7 +481,21 @@ function buildContext(
 }
 
 function extractHandlerName(expr: string): string | null {
+  // .mutate/.mutateAsync calls are already caught by detectMutationHooks
+  if (expr.includes('.mutate(') || expr.includes('.mutateAsync(')) return null;
+
+  // Direct handler name: handleFoo
   if (/^handle[A-Za-z0-9_]+$/.test(expr)) return expr;
+
+  // Arrow fn with explicit handler ref: () => handleFoo() or (e) => handleFoo(e)
+  const arrowHandlerMatch = expr.match(/^\([^)]*\)\s*=>\s*(handle[A-Za-z0-9_]+)\s*\(/);
+  if (arrowHandlerMatch) return arrowHandlerMatch[1];
+
+  // Arrow fn calling a simple function: () => doThing() — extract just the function name
+  const simpleFnCall = expr.match(/^\([^)]*\)\s*=>\s*([a-zA-Z][a-zA-Z0-9_]*)\s*\(/);
+  if (simpleFnCall) return simpleFnCall[1];
+
+  // Inline expression referencing a handle function somewhere
   const arrowMatch = expr.match(/handle[A-Za-z0-9_]+/);
   return arrowMatch?.[0] ?? null;
 }
