@@ -365,8 +365,8 @@ function guessEventName(interaction: RawInteraction): string | null {
 
   const handler = interaction.functionName;
 
-  // Strip "handle"/"on" prefix
-  let name = handler.replace(/^handle/, '').replace(/^on/, '');
+  // Strip "handle"/"on"/"use" prefix
+  let name = handler.replace(/^handle/, '').replace(/^on/, '').replace(/^use/, '');
   if (!name) return null;
 
   // VerbObject: CreateWorkflow → workflow_created
@@ -502,6 +502,17 @@ function guessRouteEventName(interaction: RawInteraction): string | null {
 }
 
 function guessMutationEventName(interaction: RawInteraction): string | null {
+  // Generic CRUD format from detectGenericCRUD: "entity.op" (e.g. "issue.insert", "cycle.delete")
+  const genericMatch = interaction.functionName.match(/^([a-z][a-z0-9_]*)\.(create|insert|update|delete|upsert|remove|destroy|save)$/i);
+  if (genericMatch) {
+    const entity = genericMatch[1].replace(/s$/, '');
+    const rawVerb = genericMatch[2].toLowerCase();
+    const verb = rawVerb === 'insert' ? 'create'
+      : rawVerb === 'destroy' || rawVerb === 'remove' ? 'delete'
+      : rawVerb;
+    return `${entity}_${toPastTense(verb)}`;
+  }
+
   const prismaMatch = interaction.functionName.match(/prisma\.(\w+)\.(create|update|delete|upsert)/i);
   if (prismaMatch) {
     const entity = toSnakeCaseFromPascalOrCamel(prismaMatch[1]);

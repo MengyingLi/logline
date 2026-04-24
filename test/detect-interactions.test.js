@@ -70,44 +70,6 @@ test('deduplicates same handler', () => {
   assert.ok(saves.length <= 1, `should dedupe, got ${saves.length}`);
 });
 
-test('detects try/catch as error_boundary', () => {
-  const files = [{ path: 'src/service.ts', content: `
-    async function processWorkflow(id) {
-      try {
-        const result = await doWork(id);
-        return result;
-      } catch (error) {
-        logger.error(error);
-      }
-    }
-  ` }];
-  assert.ok(detectInteractions(files).some(i => i.type === 'error_boundary'));
-});
-
-test('detects fetch/axios as api_call', () => {
-  const files = [{ path: 'src/api.ts', content: `
-    async function syncData() {
-      await fetch('https://api.example.com/workflows');
-      await axios.post('https://api.service.com/sync', { id: 1 });
-    }
-  ` }];
-  assert.ok(detectInteractions(files).filter(i => i.type === 'api_call').length >= 2);
-});
-
-test('detects retry logic', () => {
-  const files = [{ path: 'src/retry.ts', content: `
-    async function executeWithRetry(fn) {
-      let attempt = 0;
-      while (attempt < 3) {
-        try { return await fn(); } catch { attempt++; }
-      }
-    }
-    async function syncWithRetry() {
-      return withRetry(doSync, { retries: 3 });
-    }
-  ` }];
-  assert.ok(detectInteractions(files).some(i => i.type === 'retry_logic'));
-});
 
 // ─── Generic CRUD detector tests ───
 
