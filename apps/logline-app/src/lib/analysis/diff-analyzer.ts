@@ -65,6 +65,13 @@ export async function handlePullRequest(payload: PullRequestPayload): Promise<vo
     .slice(0, 20);
   if (filteredEvents.length === 0) return;
 
+  console.log('[logline-app] events to post:', filteredEvents.map((e) => ({
+    name: e.name,
+    file: e.location.file,
+    line: e.location.line,
+    properties: e.properties,
+  })));
+
   await postReview(octokit as any, owner, repo, prNumber, filteredEvents, diffs);
 }
 
