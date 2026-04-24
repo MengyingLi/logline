@@ -18,9 +18,11 @@ export function generateTrackingCode(
   const fn = options?.functionName?.trim() ? options.functionName.trim() : 'track';
   const loggerName = options?.logging?.instanceName ?? 'logger';
 
-  const propsStr = props
-    .map((p) => `  ${p.name}: ${p.value},${p.todo ? ' // TODO: verify' : ''}`)
-    .join('\n');
+  const propsStr = props.length === 0
+    ? '  // TODO: add properties from available context'
+    : props
+        .map((p) => `  ${p.name}: ${p.value},${p.todo ? ' // TODO: verify' : ''}`)
+        .join('\n');
 
   if (signalType === 'operation') {
     return `// Logline: ${gap.suggestedEvent}
@@ -53,6 +55,17 @@ ${propsStr}
 });`;
 }
 
+/**
+ * Semantically meaningful TypeScript object properties we're willing to suggest.
+ * Excludes internal framework fields and large data blobs.
+ */
+const USEFUL_PROPS = new Set(['id', 'email', 'name', 'status', 'role', 'type', 'title', 'slug', 'key', 'url']);
+
+/**
+ * Internal / framework-generated properties to skip when enumerating typed fields.
+ */
+const SKIP_INTERNAL_PROPS = new Set(['__typename', 'loading', 'error', 'isLoading', 'isError', 'isPending']);
+
 function inferProperties(
   gap: TrackingGap,
   fileContent: string,
@@ -63,20 +76,32 @@ function inferProperties(
   const eventParts = gap.suggestedEvent.split('_');
   const objectName = eventParts.slice(0, -1).join('_') || 'unknown';
 
-  // 1) Primary object variable
-  const objectVar = findObjectVariable(scope, objectName);
-  if (objectVar && objectName !== 'unknown') {
-    const hasId = objectVar.properties?.includes('id') ?? false;
-    props.push({
-      name: `${objectName}_id`,
-      value: hasId ? `${objectVar.accessPath}.id` : `${objectVar.accessPath}?.id`,
-      todo: false,
-    });
-  } else if (objectName !== 'unknown') {
-    props.push({ name: `${objectName}_id`, value: `${objectName}?.id`, todo: true });
+  // 1) Primary object variable — only emit if found in scope; never guess.
+  const objectVar = objectName !== 'unknown' ? findObjectVariable(scope, objectName) : null;
+  if (objectVar) {
+    const typedProps = (objectVar.properties ?? []).filter((p) => !SKIP_INTERNAL_PROPS.has(p));
+    if (typedProps.length > 0) {
+      // Emit known meaningful properties from the TypeScript type definition.
+      const useful = typedProps.filter((p) => USEFUL_PROPS.has(p)).slice(0, 4);
+      for (const prop of useful) {
+        props.push({
+          name: prop === 'id' ? `${objectName}_id` : prop,
+          value: `${objectVar.accessPath}.${prop}`,
+          todo: false,
+        });
+      }
+      // If id wasn't in the type, add it with a TODO so instrumentation is complete.
+      if (!typedProps.includes('id')) {
+        props.push({ name: `${objectName}_id`, value: `${objectVar.accessPath}?.id`, todo: true });
+      }
+    } else {
+      // Variable found but type unknown — suggest .id with TODO rather than omitting.
+      props.push({ name: `${objectName}_id`, value: `${objectVar.accessPath}?.id`, todo: true });
+    }
   }
+  // If objectVar NOT found: don't guess — caller renders a TODO comment.
 
-  // 2) User/auth variable (skip if the object IS the user — would duplicate user_id)
+  // 2) User/auth variable — only emit if a user/session variable exists in scope.
   if (objectName !== 'user') {
     const userVar = findUserVariable(scope);
     if (userVar) {
@@ -86,12 +111,11 @@ function inferProperties(
         value: isSession ? `${userVar.accessPath}?.user?.id` : `${userVar.accessPath}?.id`,
         todo: false,
       });
-    } else {
-      props.push({ name: 'user_id', value: 'user?.id', todo: true });
     }
+    // No fallback: if no user variable in scope, omit user_id rather than hallucinating one.
   }
 
-  // 3) Extra context from parameters (type/status-like)
+  // 3) Extra context from parameters (type/status-like enum values)
   const paramVars = scope.filter((v) => v.source === 'parameter');
   for (const param of paramVars) {
     const n = param.name.toLowerCase();
@@ -107,16 +131,7 @@ function inferProperties(
     props.push({ name: `${objectName}_${param.name}`, value: param.accessPath, todo: false });
   }
 
-  // 4) _name property when object has 'name' in scope
-  if (objectVar && objectVar.properties?.includes('name')) {
-    props.push({
-      name: `${objectName}_name`,
-      value: `${objectVar.accessPath}.name`,
-      todo: false,
-    });
-  }
-
-  // Add changes array for "edited" events
+  // 4) Changes array for "edited" events
   if (gap.suggestedEvent.endsWith('_edited') && gap.includes?.length) {
     props.push({
       name: 'changes',
@@ -129,15 +144,9 @@ function inferProperties(
 }
 
 function inferPropertiesFallback(gap: TrackingGap): Array<{ name: string; value: string; todo: boolean }> {
-  const eventParts = gap.suggestedEvent.split('_');
-  const objectName = eventParts.slice(0, -1).join('_') || 'unknown';
+  // No scope info: don't guess variable names that may not exist.
+  // Only emit the deterministic 'changes' property for _edited events.
   const props: Array<{ name: string; value: string; todo: boolean }> = [];
-  if (objectName !== 'unknown') {
-    props.push({ name: `${objectName}_id`, value: `${objectName}?.id`, todo: true });
-  }
-  if (objectName !== 'user') {
-    props.push({ name: 'user_id', value: 'user?.id', todo: true });
-  }
   if (gap.suggestedEvent.endsWith('_edited') && gap.includes?.length) {
     props.push({
       name: 'changes',

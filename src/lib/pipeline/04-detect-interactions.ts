@@ -45,23 +45,44 @@ export function detectInteractions(files: FileContent[]): RawInteraction[] {
 // ─── 1. UI Triggers ──────────────────────────────────────────────────────────
 
 /**
- * Finds onClick, onSubmit, onCheckedChange handlers in JSX.
+ * JSX handler attribute names that represent UI state management, not user actions.
+ * Interactions bound to these attributes are skipped entirely.
+ */
+const UI_STATE_HANDLERS = new Set([
+  'onOpenChange', 'onClose', 'onDismiss', 'onVisibleChange',
+  'onExpandedChange', 'onCheckedChange', 'onValueChange',
+  'onSelectedChange', 'onFocusChange',
+]);
+
+/**
+ * Finds onClick and onSubmit handlers in JSX.
  * Works with React, Preact, Solid, or any JSX-like syntax.
+ * Skips UI state management attributes (onOpenChange, onCheckedChange, etc.)
+ * and onClick handlers that are purely dismiss/close actions (() => fn(false)).
  */
 function detectUITriggers(file: FileContent, content: string, lines: string[]): RawInteraction[] {
   const results: RawInteraction[] = [];
   const typeMap: Record<string, RawInteraction['type']> = {
     Click: 'click_handler',
     Submit: 'form_submit',
-    CheckedChange: 'toggle',
   };
-  const pattern = /on(Click|Submit|CheckedChange)\s*=\s*\{([^}]+)\}/g;
+  // Match all on[A-Z]... attributes — UI_STATE_HANDLERS and extractHandlerName filter the noise.
+  const pattern = /on([A-Z][A-Za-z]+)\s*=\s*\{([^}]+)\}/g;
   let m: RegExpExecArray | null;
 
   while ((m = pattern.exec(content)) !== null) {
     if (isInsideStringOrComment(content, m.index)) continue;
     const eventKind = m[1];
+    const attrName = `on${eventKind}`;
     const expr = m[2].trim();
+
+    // Skip UI state management handlers entirely
+    if (UI_STATE_HANDLERS.has(attrName)) continue;
+
+    // Skip onClick that is purely a dismiss/close: () => fn(false)
+    if (eventKind === 'Click' &&
+        /^\([^)]*\)\s*=>\s*[a-zA-Z][a-zA-Z0-9_.]*\s*\(\s*false\s*\)$/.test(expr)) continue;
+
     const handlerName = extractHandlerName(expr);
     if (!handlerName) continue;
 
@@ -80,7 +101,7 @@ function detectUITriggers(file: FileContent, content: string, lines: string[]): 
         ...extractEntitiesFromName(handlerName),
         ...extractEntitiesFromFilePath(file.path),
       ].filter((v, i, arr) => arr.indexOf(v) === i),
-      triggerExpression: `on${eventKind}={${expr}}`,
+      triggerExpression: `${attrName}={${expr}}`,
       confidence: isInline ? 0.7 : type === 'form_submit' ? 0.9 : 0.85,
     });
   }

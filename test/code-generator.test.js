@@ -98,17 +98,20 @@ test('non-edited event does not generate changes property', () => {
 
 // ─── generateTrackingCode — fallback property inference ───
 
-test('fallback inference: object_id with todo comment', () => {
+test('fallback inference: no scope → TODO comment instead of guessed variables', () => {
   const code = generateTrackingCode(makeGap('workflow_created'));
-  assert.ok(code.includes('workflow_id'), `should include workflow_id, got: ${code}`);
-  assert.ok(code.includes('TODO'), `should include TODO for unverified property, got: ${code}`);
+  // Without scope info we should never guess variable names that may not exist.
+  assert.ok(!code.includes('workflow_id'), `should not guess workflow_id without scope, got: ${code}`);
+  assert.ok(!code.includes('user_id'), `should not guess user_id without scope, got: ${code}`);
+  assert.ok(code.includes('TODO'), `should emit TODO comment when no scope available, got: ${code}`);
 });
 
-test('fallback inference: unknown object name skips object_id', () => {
+test('fallback inference: unknown object name emits TODO comment', () => {
   const code = generateTrackingCode(makeGap('created'));
   // event parts: ['created'] → objectName = '' → 'unknown'
   assert.ok(!code.includes('unknown_id'), `should not include unknown_id, got: ${code}`);
-  assert.ok(code.includes('user_id'), `should still include user_id, got: ${code}`);
+  assert.ok(!code.includes('user_id'), `should not guess user_id without scope, got: ${code}`);
+  assert.ok(code.includes('TODO'), `should emit TODO comment, got: ${code}`);
 });
 
 // ─── generateTrackingCode — with file content (scope inference) ───
@@ -124,9 +127,10 @@ function createWorkflow(workflow) {
 });
 
 test('scope inference: uses user variable when present in file', () => {
+  // user must be in scope at the insertion point (inside the function)
   const fileContent = `
-const { user } = useAuth();
 function handleSubmit() {
+  const { user } = useAuth();
   // track here
 }
 `;
