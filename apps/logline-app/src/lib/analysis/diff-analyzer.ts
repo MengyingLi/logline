@@ -59,6 +59,7 @@ export async function handlePullRequest(payload: PullRequestPayload): Promise<vo
   const events = await synthesizeEvents(newInteractions, profile, {
     fast: !process.env.OPENAI_API_KEY,
     apiKey: process.env.OPENAI_API_KEY,
+    files: files as FileContent[],
   });
   const filteredEvents = events
     .filter((event) => shouldSuggestEvent(repoFullName, event.name))
