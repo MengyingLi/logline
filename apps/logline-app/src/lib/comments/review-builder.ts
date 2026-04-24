@@ -51,7 +51,7 @@ export async function postReview(
   const { summary, comments } = buildReview(events, diffs);
   if (comments.length === 0) return;
 
-  await octokit.pulls.createReview({
+  await octokit.request('POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews', {
     owner,
     repo,
     pull_number: prNumber,
