@@ -36,7 +36,16 @@ export async function synthesizeEvents(
       if (primaryIdx !== undefined) {
         const primary = interactions[primaryIdx];
         if (primary) {
-          event.properties = extractPropertiesFromInteraction(primary, files);
+          // Try all source interactions — the one with the typed mutationFn might
+          // not be the primary (e.g. form_submit in dialog vs. mutation in hook).
+          let props: PropertySpec[] = [];
+          for (const idx of event.sourceInteractions) {
+            const src = interactions[idx];
+            if (!src) continue;
+            props = extractPropertiesFromInteraction(src, files);
+            if (props.length > 0) break;
+          }
+          event.properties = props;
         }
       }
     }
@@ -605,13 +614,10 @@ export function extractPropertiesFromInteraction(
   files: FileContent[]
 ): PropertySpec[] {
   const file = files.find((f) => f.path === interaction.file);
-  const fullContent = file?.content ?? interaction.codeContext;
-  const lines = fullContent.split('\n');
-
-  // Use a generous window so multi-line mutationFn bodies are fully captured.
-  const lo = Math.max(0, interaction.line - 6);
-  const hi = Math.min(lines.length, interaction.line + 80);
-  const body = lines.slice(lo, hi).join('\n');
+  // Search the full file — hooks/mutations are often declared well above the JSX
+  // that triggered detection (a 6-line backward window misses them entirely).
+  // Fall back to the stored codeContext only when the file isn't available.
+  const body = file?.content ?? interaction.codeContext;
 
   const props: PropertySpec[] = [];
   const seen = new Set<string>();
