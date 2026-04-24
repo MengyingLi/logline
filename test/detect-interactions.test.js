@@ -108,3 +108,77 @@ test('detects retry logic', () => {
   ` }];
   assert.ok(detectInteractions(files).some(i => i.type === 'retry_logic'));
 });
+
+// ─── Generic CRUD detector tests ───
+
+test('multi-line Supabase chain: entity resolved from .from() across lines', () => {
+  const files = [{ path: 'src/db.ts', content: `
+    async function deleteUser(id) {
+      await supabase
+        .from('users')
+        .delete()
+        .eq('id', id);
+    }
+  ` }];
+  const mutations = detectInteractions(files).filter(i => i.type === 'mutation');
+  assert.ok(mutations.length > 0, 'should detect at least one mutation');
+  assert.ok(
+    mutations.some(i => (i.relatedEntities ?? []).includes('user')),
+    `should resolve entity "user" from .from('users'), got: ${JSON.stringify(mutations.map(i => i.relatedEntities))}`
+  );
+});
+
+test('Prisma model.create: entity resolved from prisma.user.create chain', () => {
+  const files = [{ path: 'src/service.ts', content: `
+    await prisma.user.create({ data: { name: 'Alice' } });
+  ` }];
+  const mutations = detectInteractions(files).filter(i => i.type === 'mutation');
+  assert.ok(mutations.length > 0, 'should detect mutation');
+  assert.ok(
+    mutations.some(i => (i.relatedEntities ?? []).includes('user')),
+    `should resolve entity "user", got: ${JSON.stringify(mutations.map(i => i.relatedEntities))}`
+  );
+});
+
+test('generic ORM db.insert(table): entity resolved from argument', () => {
+  const files = [{ path: 'src/repo.ts', content: `
+    await db.insert(users).values({ name: 'Alice' });
+  ` }];
+  const mutations = detectInteractions(files).filter(i => i.type === 'mutation');
+  assert.ok(mutations.length > 0, 'should detect mutation');
+  assert.ok(
+    mutations.some(i => (i.relatedEntities ?? []).includes('user')),
+    `should resolve entity "user" from argument "users", got: ${JSON.stringify(mutations.map(i => i.relatedEntities))}`
+  );
+});
+
+test('useMutation wrapping Supabase: entity extracted from mutationFn body', () => {
+  const files = [{ path: 'src/hooks/useIssue.ts', content: `
+    function useDeleteIssue() {
+      return useMutation({
+        mutationFn: async (id) => {
+          await supabase.from('issues').delete().eq('id', id);
+        },
+      });
+    }
+  ` }];
+  const mutations = detectInteractions(files).filter(i => i.triggerExpression === 'useMutation(');
+  assert.ok(mutations.length > 0, 'should detect useMutation');
+  assert.ok(
+    mutations.some(i => (i.relatedEntities ?? []).includes('issue')),
+    `should resolve entity "issue" from mutationFn body, got: ${JSON.stringify(mutations.map(i => i.relatedEntities))}`
+  );
+});
+
+test('.delete() inside comment or string is not detected as mutation', () => {
+  const files = [{ path: 'src/service.ts', content: `
+    // await supabase.from('users').delete()
+    /* prisma.user.delete({ where: { id } }) */
+    const sql = "db.delete(orders)";
+  ` }];
+  const mutations = detectInteractions(files).filter(i => i.type === 'mutation');
+  assert.equal(
+    mutations.length, 0,
+    `should not detect mutations inside comments/strings, got: ${JSON.stringify(mutations.map(i => i.triggerExpression))}`
+  );
+});

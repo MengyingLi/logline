@@ -32,7 +32,8 @@ export function detectInteractions(files: FileContent[]): RawInteraction[] {
     interactions.push(...detectFormSubmits(file, content, lines));
     interactions.push(...detectHandlerDeclarations(file, content, lines));
     interactions.push(...detectRouteHandlers(file, content, lines));
-    interactions.push(...detectMutations(file, content, lines));
+    interactions.push(...detectGenericCRUD(file, content, lines));
+    interactions.push(...detectUseMutations(file, content, lines));
     interactions.push(...detectServerActions(file, content, lines));
     interactions.push(...detectTRPCMutationsAndQueries(file, content, lines));
     interactions.push(...detectReduxDispatches(file, content, lines));
@@ -224,86 +225,168 @@ function detectRouteHandlers(file: FileContent, content: string, lines: string[]
   return results;
 }
 
-function detectMutations(file: FileContent, content: string, lines: string[]): RawInteraction[] {
+// ─── Generic CRUD helpers ───
+
+/** ORM/DB client variable names that should not be treated as entity names */
+const CRUD_CLIENT_PREFIXES = new Set([
+  'db', 'sql', 'client', 'pool', 'conn', 'connection', 'knex', 'prisma', 'supabase',
+  'mongo', 'mongoose', 'collection', 'this', 'self', 'that', 'repository', 'repo',
+  'orm', 'sequelize', 'typeorm', 'kysely', 'drizzle', 'firestore', 'dynamo',
+]);
+
+/** Common parameter / variable names that are not entity names */
+const CRUD_NON_ENTITY_ARGS = new Set([
+  'data', 'values', 'where', 'options', 'config', 'req', 'res', 'input', 'body',
+  'payload', 'params', 'args', 'ctx', 'context', 'event', 'request', 'response',
+  'err', 'error', 'result', 'item', 'obj', 'object',
+]);
+
+/**
+ * Given the text immediately before a CRUD method's dot (backward) and the text
+ * immediately after the opening paren (afterParen), resolve the best entity name.
+ *
+ * Priority:
+ *   1. .from('tableName') in backward  — Supabase / Knex (handles multi-line chains)
+ *   2. prefix.model. chain ending      — Prisma: prisma.user.create
+ *   3. String argument after paren     — collection.insert('tableName')
+ *   4. Bare identifier argument        — db.insert(users)
+ */
+function resolveEntityFromCRUDContext(backward: string, afterParen: string): string | null {
+  // 1) .from('tableName') anywhere in backward
+  const fromMatch = backward.match(/\.from\s*\(\s*['"]([^'"]{1,50})['"]\s*\)/);
+  if (fromMatch) {
+    return fromMatch[1].toLowerCase().replace(/s$/, '') || null;
+  }
+
+  // 2) last dot-separated identifier before the CRUD dot (e.g. prisma.user → 'user')
+  const chainMatch = backward.match(/\.([a-zA-Z][a-zA-Z0-9]{1,})$/);
+  if (chainMatch) {
+    const candidate = chainMatch[1].toLowerCase();
+    if (!CRUD_CLIENT_PREFIXES.has(candidate) && candidate.length >= 3) {
+      return candidate.replace(/s$/, '');
+    }
+  }
+
+  // 3) string argument directly after paren
+  const strArgMatch = afterParen.match(/^['"]([^'"]{1,50})['"]/);
+  if (strArgMatch) {
+    return strArgMatch[1].toLowerCase().replace(/s$/, '');
+  }
+
+  // 4) bare identifier argument: db.insert(users) or collection('items')
+  const idArgMatch = afterParen.match(/^([a-zA-Z][a-zA-Z0-9_]{2,})\s*[,)]/);
+  if (idArgMatch) {
+    const candidate = idArgMatch[1];
+    if (!CRUD_NON_ENTITY_ARGS.has(candidate.toLowerCase()) &&
+        !CRUD_CLIENT_PREFIXES.has(candidate.toLowerCase())) {
+      return candidate.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().replace(/s$/, '');
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Scan a code body snippet for the first CRUD call and return entity + op.
+ * Used to extract entity info from useMutation bodies and server action bodies.
+ */
+function findCRUDInBody(body: string): { entity: string; op: string } | null {
+  const pattern = /\.(create|insert|update|delete|upsert|remove|destroy|save)\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(body)) !== null) {
+    if (isInsideStringOrComment(body, m.index)) continue;
+    const op = m[1];
+    const matchEnd = m.index + m[0].length;
+    const backward = body.substring(Math.max(0, m.index - 200), m.index);
+    const afterParen = body.substring(matchEnd, matchEnd + 80);
+    const entity = resolveEntityFromCRUDContext(backward, afterParen);
+    if (entity) return { entity, op };
+  }
+  return null;
+}
+
+/**
+ * Generic CRUD detector — finds any .create/.insert/.update/.delete/.upsert/.remove/.destroy/.save(
+ * call regardless of framework, resolving the entity name from surrounding context.
+ * Handles multi-line chains by scanning backward up to 300 chars for .from() or model. patterns.
+ *
+ * Replaces the old Prisma/Supabase/Drizzle-specific detectMutations.
+ */
+function detectGenericCRUD(file: FileContent, content: string, lines: string[]): RawInteraction[] {
   const results: RawInteraction[] = [];
+  const pattern = /\.(create|insert|update|delete|upsert|remove|destroy|save)\s*\(/g;
   let m: RegExpExecArray | null;
 
-  // Prisma: prisma.model.create/update/delete/upsert(
-  const prismaPattern = /prisma\.([a-zA-Z][a-zA-Z0-9]*)\.(create|update|delete|upsert|deleteMany|updateMany|createMany)\s*\(/g;
-  while ((m = prismaPattern.exec(content)) !== null) {
+  while ((m = pattern.exec(content)) !== null) {
     if (isInsideStringOrComment(content, m.index)) continue;
-    const model = m[1];
-    const op = m[2];
-    const { line, context } = buildContext(content, m.index, lines);
 
-    results.push({
-      type: 'mutation',
-      file: file.path,
-      line,
-      functionName: `prisma.${model}.${op}`,
-      codeContext: context,
-      relatedEntities: [model.toLowerCase()],
-      triggerExpression: `prisma.${model}.${op}(`,
-      confidence: 0.85,
-    });
-  }
-
-  // Supabase: supabase.from('table').insert/update/delete(
-  const supabasePattern = /supabase\.from\(['"]([^'"]+)['"]\)\.(insert|update|delete|upsert)\s*\(/g;
-  while ((m = supabasePattern.exec(content)) !== null) {
-    if (isInsideStringOrComment(content, m.index)) continue;
-    const table = m[1];
-    const op = m[2];
-    const { line, context } = buildContext(content, m.index, lines);
-
-    results.push({
-      type: 'mutation',
-      file: file.path,
-      line,
-      functionName: `supabase.from('${table}').${op}`,
-      codeContext: context,
-      relatedEntities: [table.replace(/s$/, '').toLowerCase()],
-      triggerExpression: `supabase.from('${table}').${op}(`,
-      confidence: 0.85,
-    });
-  }
-
-  // Drizzle: db.insert(table).values / db.update(table).set / db.delete(table)
-  const drizzlePattern = /db\.(insert|update|delete)\s*\(\s*([a-zA-Z][a-zA-Z0-9]*)\s*\)/g;
-  while ((m = drizzlePattern.exec(content)) !== null) {
-    if (isInsideStringOrComment(content, m.index)) continue;
     const op = m[1];
-    const table = m[2];
+    const matchEnd = m.index + m[0].length;
+    const backward = content.substring(Math.max(0, m.index - 300), m.index);
+    const afterParen = content.substring(matchEnd, matchEnd + 80);
+
+    let entity = resolveEntityFromCRUDContext(backward, afterParen);
     const { line, context } = buildContext(content, m.index, lines);
+
+    if (!entity) {
+      const funcName = findEnclosingFunction(lines, line);
+      if (funcName) entity = extractEntitiesFromName(funcName)[0] ?? null;
+    }
+    if (!entity) {
+      entity = extractEntitiesFromFilePath(file.path)[0] ?? null;
+    }
+    if (!entity) continue;
 
     results.push({
       type: 'mutation',
       file: file.path,
       line,
-      functionName: `db.${op}(${table})`,
+      functionName: `${entity}.${op}`,
       codeContext: context,
-      relatedEntities: [table.replace(/s$/, '').toLowerCase()],
-      triggerExpression: `db.${op}(${table})`,
-      confidence: 0.85,
+      relatedEntities: [entity],
+      triggerExpression: `.${op}(`,
+      confidence: 0.8,
     });
   }
 
-  // useMutation (React Query / tRPC)
-  const useMutationPattern = /\buseMutation\s*[(<]/g;
-  while ((m = useMutationPattern.exec(content)) !== null) {
+  return results;
+}
+
+/**
+ * useMutation detector — finds useMutation hooks and extracts entity info from the
+ * mutationFn body rather than just tagging the file path.
+ */
+function detectUseMutations(file: FileContent, content: string, lines: string[]): RawInteraction[] {
+  const results: RawInteraction[] = [];
+  const pattern = /\buseMutation\s*[(<]/g;
+  let m: RegExpExecArray | null;
+
+  while ((m = pattern.exec(content)) !== null) {
     if (isInsideStringOrComment(content, m.index)) continue;
     const { line, context } = buildContext(content, m.index, lines);
-    const entities = extractEntitiesFromFilePath(file.path);
+
+    // Look for mutationFn: within the next 1000 chars and scan its body for CRUD calls
+    const ahead = content.substring(m.index, m.index + 1000);
+    const mutFnMatch = ahead.match(/mutationFn\s*:/);
+    let crudInfo: { entity: string; op: string } | null = null;
+    if (mutFnMatch) {
+      const bodyStart = m.index + mutFnMatch.index! + mutFnMatch[0].length;
+      crudInfo = findCRUDInBody(content.substring(bodyStart, bodyStart + 500));
+    }
+
+    // Prefer the enclosing hook/function name over the generic 'useMutation'
+    const enclosing = findEnclosingFunction(lines, line);
+    const functionName = (enclosing && enclosing !== 'useMutation') ? enclosing : 'useMutation';
 
     results.push({
       type: 'mutation',
       file: file.path,
       line,
-      functionName: 'useMutation',
+      functionName,
       codeContext: context,
-      relatedEntities: entities,
+      relatedEntities: crudInfo ? [crudInfo.entity] : extractEntitiesFromFilePath(file.path),
       triggerExpression: 'useMutation(',
-      confidence: 0.75,
+      confidence: crudInfo ? 0.85 : 0.75,
     });
   }
 
@@ -350,15 +433,26 @@ function detectServerActions(file: FileContent, content: string, lines: string[]
     if (isInsideStringOrComment(content, m.index)) continue;
     const fn = m[1];
     const { line, context } = buildContext(content, m.index, lines);
+
+    // Scan function body for CRUD calls to get better entity detection
+    const bodyStart = content.indexOf('{', m.index + m[0].length);
+    const crudInfo = bodyStart !== -1
+      ? findCRUDInBody(content.substring(bodyStart + 1, bodyStart + 600))
+      : null;
+
+    const relatedEntities = crudInfo
+      ? [crudInfo.entity]
+      : [...extractEntitiesFromName(fn), ...extractEntitiesFromFilePath(file.path)].filter((v, i, arr) => arr.indexOf(v) === i);
+
     results.push({
       type: 'lifecycle',
       file: file.path,
       line,
       functionName: fn,
       codeContext: context,
-      relatedEntities: [...extractEntitiesFromName(fn), ...extractEntitiesFromFilePath(file.path)].filter((v, i, arr) => arr.indexOf(v) === i),
+      relatedEntities,
       triggerExpression: `serverAction(${fn})`,
-      confidence: 0.6,
+      confidence: crudInfo ? 0.75 : 0.6,
     });
   }
   return results;

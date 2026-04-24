@@ -21,7 +21,7 @@
   "license": "MIT",
   "author": "Mengying Li",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "bin": {
     "logline": "./dist/cli.js"
