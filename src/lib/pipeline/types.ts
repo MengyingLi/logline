@@ -49,6 +49,8 @@ export interface SynthesizedEvent {
   location: CodeLocation;
   /** All locations where this event could be tracked */
   allLocations?: CodeLocation[];
+  /** Properties extracted from source code analysis (verified variables in scope) */
+  properties?: PropertySpec[];
 }
 
 /** Output of stage 06: events with refined locations */

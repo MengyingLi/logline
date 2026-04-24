@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
-import type { ProductProfile, CodeLocation, SignalType } from '../types';
-import type { RawInteraction, SynthesizedEvent } from './types';
+import type { ProductProfile, CodeLocation, SignalType, FileContent } from '../types';
+import type { RawInteraction, SynthesizedEvent, PropertySpec } from './types';
 import {
   extractLikelyObjectFromPath,
   isValidEventName,
@@ -18,13 +18,31 @@ import { llmCall } from '../utils/llm';
 export async function synthesizeEvents(
   interactions: RawInteraction[],
   profile: ProductProfile,
-  options: { fast?: boolean; apiKey?: string; granular?: boolean; verbose?: boolean }
+  options: { fast?: boolean; apiKey?: string; granular?: boolean; verbose?: boolean; files?: FileContent[] }
 ): Promise<SynthesizedEvent[]> {
+  const files = options.files ?? [];
+
+  let events: SynthesizedEvent[];
   if (options.fast || !options.apiKey) {
-    return regexFallbackSynthesis(interactions, { granular: options.granular });
+    events = regexFallbackSynthesis(interactions, { granular: options.granular });
+  } else {
+    events = await llmSynthesis(interactions, profile, options.apiKey, options.granular, options.verbose);
   }
 
-  return llmSynthesis(interactions, profile, options.apiKey, options.granular, options.verbose);
+  // Attach properties from source-code analysis when file contents are available.
+  if (files.length > 0) {
+    for (const event of events) {
+      const primaryIdx = event.sourceInteractions[0];
+      if (primaryIdx !== undefined) {
+        const primary = interactions[primaryIdx];
+        if (primary) {
+          event.properties = extractPropertiesFromInteraction(primary, files);
+        }
+      }
+    }
+  }
+
+  return events;
 }
 
 function regexFallbackSynthesis(
@@ -570,6 +588,113 @@ function guessFromUiHint(interaction: RawInteraction): string | null {
   const candidate = `${object}_${pastVerb}`;
   if (!isValidEventName(candidate) || !isBusinessEvent(candidate)) return null;
   return candidate;
+}
+
+// ─── Property extraction from source code ────────────────────────────────────
+
+/**
+ * Extracts analytics properties from the source code at an interaction's location.
+ *
+ * Three extraction passes (in order):
+ *   1. Typed inline parameter — `async (arg: { prop: type }) =>` → extract props + types
+ *   2. Untyped parameter usage — `async (arg) =>` → scan body for `arg.prop` patterns
+ *   3. Database return destructuring — `const { data } = await client.from(…)` → add entity_id
+ */
+export function extractPropertiesFromInteraction(
+  interaction: RawInteraction,
+  files: FileContent[]
+): PropertySpec[] {
+  const file = files.find((f) => f.path === interaction.file);
+  const fullContent = file?.content ?? interaction.codeContext;
+  const lines = fullContent.split('\n');
+
+  // Use a generous window so multi-line mutationFn bodies are fully captured.
+  const lo = Math.max(0, interaction.line - 6);
+  const hi = Math.min(lines.length, interaction.line + 80);
+  const body = lines.slice(lo, hi).join('\n');
+
+  const props: PropertySpec[] = [];
+  const seen = new Set<string>();
+
+  function add(p: PropertySpec): void {
+    if (!seen.has(p.name)) { seen.add(p.name); props.push(p); }
+  }
+
+  // Pass 1: typed inline parameter
+  //   mutationFn: async (arg: { email: string; role: 'admin' | 'member' }) =>
+  //   async (arg: { email: string }) =>
+  const typedMatch = body.match(
+    /(?:mutationFn\s*:\s*)?async\s*\(\s*(\w+)\s*:\s*\{([^}]+)\}\s*\)\s*=>/
+  );
+  if (typedMatch) {
+    const argName = typedMatch[1];
+    const typeBody = typedMatch[2];
+    for (const field of typeBody.split(/[;,]/)) {
+      const fm = field.trim().match(/^(\w+)\??\s*:\s*(.+)$/);
+      if (!fm) continue;
+      const name = fm[1].trim();
+      if (!name || name.length < 2) continue;
+      add({
+        name,
+        type: normalizePropertyType(fm[2]),
+        required: !field.trim().includes('?:'),
+        description: `from ${argName} parameter`,
+        accessPath: `${argName}.${name}`,
+        verified: true,
+      });
+    }
+  } else {
+    // Pass 2: untyped parameter — scan body for arg.prop usages
+    const untypedMatch = body.match(
+      /(?:mutationFn\s*:\s*)?async\s*\(\s*(\w+)\s*\)\s*=>/
+    );
+    if (untypedMatch) {
+      const argName = untypedMatch[1];
+      const SKIP_ARGS = new Set(['e', 'ev', 'event', 'req', 'res', 'ctx', 'context', 'err', 'error']);
+      if (!SKIP_ARGS.has(argName)) {
+        const usageRe = new RegExp(`\\b${argName}\\.([a-zA-Z][a-zA-Z0-9_]*)`, 'g');
+        const SKIP_PROPS = new Set(['id', 'then', 'catch', 'finally', 'call', 'apply']);
+        let um: RegExpExecArray | null;
+        while ((um = usageRe.exec(body)) !== null) {
+          const prop = um[1];
+          if (SKIP_PROPS.has(prop)) continue;
+          add({
+            name: prop,
+            type: 'string',
+            required: true,
+            description: `from ${argName} usage`,
+            accessPath: `${argName}.${prop}`,
+            verified: true,
+          });
+        }
+      }
+    }
+  }
+
+  // Pass 3: database return — const { data } = await client.from(...)
+  if (/const\s*\{\s*data\b[^}]*\}\s*=\s*await\s+\w+\./.test(body)) {
+    const entity = interaction.relatedEntities?.[0];
+    if (entity) {
+      add({
+        name: `${entity}_id`,
+        type: 'string',
+        required: false,
+        description: 'from insert return data',
+        accessPath: 'data?.id',
+        verified: true,
+      });
+    }
+  }
+
+  return props;
+}
+
+function normalizePropertyType(rawType: string): PropertySpec['type'] {
+  const t = rawType.trim().toLowerCase().replace(/\s+/g, '');
+  if (t === 'number' || t === 'int' || t === 'float' || t === 'bigint') return 'number';
+  if (t === 'boolean' || t === 'bool') return 'boolean';
+  if (t.endsWith('[]') || t.startsWith('array')) return 'array';
+  return 'string'; // covers 'string', union literals, and unknown types
 }
 
 const CREATION_VERBS = new Set(['created', 'added', 'inserted']);

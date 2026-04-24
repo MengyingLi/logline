@@ -1,4 +1,4 @@
-import { generateTrackingCode, type SynthesizedEvent } from 'logline-cli';
+import { generateTrackingCode, type SynthesizedEvent, type PropertySpec } from 'logline-cli';
 import { buildSuggestionComment } from './templates';
 import type { DiffFile } from '@/types';
 
@@ -17,15 +17,7 @@ export function buildReview(events: SynthesizedEvent[], diffs: DiffFile[]): { su
     const diffLine = mapSourceLineToDiffLine(event.location.line, diff);
     if (!diffLine) continue;
 
-    const trackingCode = generateTrackingCode({
-      suggestedEvent: event.name,
-      reason: event.description,
-      confidence: 0.8,
-      priority: event.priority,
-      location: event.location,
-      hint: event.description,
-      includes: event.includes,
-    });
+    const trackingCode = buildTrackingCodeFromEvent(event);
 
     comments.push({
       path: event.location.file,
@@ -106,5 +98,43 @@ function emojiForPriority(priority: string): string {
 
 function title(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+/**
+ * Generate the tracking code string for a suggestion comment.
+ *
+ * Priority:
+ *   1. event.properties populated → render exact property accessors (no hallucination)
+ *   2. event.properties exists but empty → TODO comment with file hint
+ *   3. No properties info → fall back to generateTrackingCode (scope-aware via logline-cli)
+ */
+function buildTrackingCodeFromEvent(event: SynthesizedEvent): string {
+  if (event.properties !== undefined) {
+    if (event.properties.length > 0) {
+      const propsStr = event.properties
+        .map((p: PropertySpec) => {
+          const val = p.accessPath ?? `${p.name}?.id`;
+          const comment = p.todo ? ' // TODO: verify' : '';
+          return `  ${p.name}: ${val},${comment}`;
+        })
+        .join('\n');
+      return `track('${event.name}', {\n${propsStr}\n});`;
+    }
+    // Properties extracted but nothing found — emit a helpful TODO
+    const fileName = event.location.file.split('/').pop()?.replace(/\.(ts|tsx|js|jsx)$/, '') ?? '';
+    const hint = fileName ? `check ${fileName} for available fields` : 'add properties from available context';
+    return `track('${event.name}', {\n  // TODO: ${hint}\n});`;
+  }
+
+  // No property extraction info — fall back to logline-cli's scope-aware generator
+  return generateTrackingCode({
+    suggestedEvent: event.name,
+    reason: event.description,
+    confidence: 0.8,
+    priority: event.priority,
+    location: event.location,
+    hint: event.description,
+    includes: event.includes,
+  });
 }
 

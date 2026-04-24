@@ -136,6 +136,7 @@ export async function scanCommand(options: {
     apiKey: process.env.OPENAI_API_KEY,
     granular: options.granular,
     verbose: Boolean(options.verbose && spinnersEnabled),
+    files,
   });
   if (synthSpinner) synthSpinner.succeed(`${synthesized.length} events identified`);
 
