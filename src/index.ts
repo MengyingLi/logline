@@ -41,6 +41,9 @@ export { generateExpectedSequences } from './lib/context/expected-sequence';
 
 // Code generation
 export { generateTrackingCode } from './lib/utils/code-generator';
+
+// Apply command (programmatic / MCP use)
+export { applyCommand, applyEvent } from './commands/apply';
 export { analyzeScope } from './lib/utils/scope-analyzer';
 
 // Types

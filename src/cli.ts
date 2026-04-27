@@ -14,6 +14,7 @@ import { metricsCommand } from './commands/metrics';
 import { contextCommand } from './commands/context';
 import { exportCommand } from './commands/export';
 import { doctorCommand } from './commands/doctor';
+import { applyCommand } from './commands/apply';
 
 const program = new Command();
 
@@ -153,6 +154,14 @@ program
       format,
       output: opts.output ? String(opts.output) : undefined,
     });
+  });
+
+program
+  .command('apply [eventName]')
+  .description('Interactively apply suggested analytics events to source files')
+  .option('--cwd <cwd>', 'Working directory')
+  .action(async (eventName: string | undefined, opts: { cwd?: string }) => {
+    await applyCommand({ cwd: opts.cwd, eventName });
   });
 
 program
