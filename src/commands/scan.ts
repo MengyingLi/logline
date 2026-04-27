@@ -15,6 +15,7 @@ import { analyzeProduct } from '../lib/pipeline/03-product-profile';
 import { detectInteractions } from '../lib/pipeline/04-detect-interactions';
 import { extractContext } from '../lib/pipeline/04b-extract-context';
 import { synthesizeEvents } from '../lib/pipeline/05-synthesize-events';
+import { scoreEvents, type ScoredEvent } from '../lib/pipeline/05b-score-events';
 import { findBestLocation } from '../lib/pipeline/06-find-locations';
 import { hashCodebase, readCache, writeCache } from '../lib/utils/cache';
 import { readLoglineConfig } from '../lib/utils/config';
@@ -140,12 +141,22 @@ export async function scanCommand(options: {
   });
   if (synthSpinner) synthSpinner.succeed(`${synthesized.length} events identified`);
 
-  // Post-synthesis: deduplicate same-named events, keeping the best source
-  const deduped = deduplicateSynthesizedBySource(synthesized);
+  // Stage 5b: Score events by relevance, then deduplicate same-named events by score
+  const scored = scoreEvents(synthesized, context, files);
+  const deduped = deduplicateScoredEvents(scored);
+  const filtered = deduped.filter((e) => e.relevanceScore >= 0.25);
+
+  // Override priority based on relevance score
+  for (const event of filtered) {
+    if (event.relevanceScore >= 0.7) event.priority = 'critical';
+    else if (event.relevanceScore >= 0.55) event.priority = 'high';
+    else if (event.relevanceScore >= 0.4) event.priority = 'medium';
+    else event.priority = 'low';
+  }
 
   // Stage 6: Refine locations for events that don't have a concrete one
   const existingNames = new Set(inventory.existingEvents.map((e) => e.name.toLowerCase()));
-  const newEvents = deduped.filter((e) => !existingNames.has(e.name.toLowerCase()));
+  const newEvents = filtered.filter((e) => !existingNames.has(e.name.toLowerCase()));
 
   const locSpinner = spinnersEnabled && newEvents.length > 0 ? ora('Refining event locations...').start() : null;
   for (const event of newEvents) {
@@ -177,32 +188,14 @@ export async function scanCommand(options: {
 
 // ─── Deduplication ───
 
-/**
- * When multiple synthesized events share the same name, keep only the one from the
- * highest-priority source. Priority: UI component > API route > hook > lib/util > other.
- * Within the same priority tier, keep the higher-confidence event.
- */
-function deduplicateSynthesizedBySource(events: SynthesizedEvent[]): SynthesizedEvent[] {
-  const sourceRank = (file: string): number => {
-    if (/\/(components?|pages?|app|views?|screens?|features?|ui)\//i.test(file)) return 0;
-    if (/\/(api|routes?)\//i.test(file)) return 1;
-    if (/\/hooks?\//i.test(file)) return 2;
-    if (/\/(lib|utils?|helpers?|services?)\//i.test(file)) return 3;
-    return 4;
-  };
-
-  const byName = new Map<string, SynthesizedEvent>();
+/** For same-named events, keep the one with the highest relevance score. */
+function deduplicateScoredEvents(events: ScoredEvent[]): ScoredEvent[] {
+  const byName = new Map<string, ScoredEvent>();
   for (const event of events) {
     const key = event.name.toLowerCase();
     const existing = byName.get(key);
-    if (!existing) {
+    if (!existing || event.relevanceScore > existing.relevanceScore) {
       byName.set(key, event);
-    } else {
-      const existingRank = sourceRank(existing.location?.file ?? '');
-      const newRank = sourceRank(event.location?.file ?? '');
-      if (newRank < existingRank || (newRank === existingRank && (event.location?.confidence ?? 0) > (existing.location?.confidence ?? 0))) {
-        byName.set(key, event);
-      }
     }
   }
   return Array.from(byName.values());
@@ -211,7 +204,7 @@ function deduplicateSynthesizedBySource(events: SynthesizedEvent[]): Synthesized
 // ─── Converters ───
 
 function synthesizedToGap(event: SynthesizedEvent): TrackingGap {
-  return {
+  const gap: TrackingGap = {
     suggestedEvent: event.name,
     reason: event.description,
     location: event.location,
@@ -222,6 +215,13 @@ function synthesizedToGap(event: SynthesizedEvent): TrackingGap {
     includes: event.includes,
     locations: event.allLocations?.map((l) => l.file),
   };
+  // Attach relevance score for --json debugging output
+  if ('relevanceScore' in event) {
+    const scored = event as ScoredEvent;
+    gap.relevanceScore = scored.relevanceScore;
+    gap.scoreBreakdown = scored.scoreBreakdown;
+  }
+  return gap;
 }
 
 function synthesizedToGapLike(event: SynthesizedEvent): TrackingGap {

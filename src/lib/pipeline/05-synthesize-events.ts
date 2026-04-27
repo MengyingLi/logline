@@ -4,7 +4,6 @@ import type { RawInteraction, SynthesizedEvent, PropertySpec } from './types';
 import {
   extractLikelyObjectFromPath,
   isValidEventName,
-  isBusinessEvent,
   toSnakeCaseFromPascalOrCamel,
   toSnakeCaseFromWords,
 } from '../utils/event-name';
@@ -66,7 +65,6 @@ function regexFallbackSynthesis(
     const name = guessEventName(interaction);
     if (!name) continue;
     if (!isValidEventName(name)) continue;
-    if (!isBusinessEvent(name)) continue;
 
     events.push({
       name,
@@ -135,7 +133,7 @@ async function llmSynthesis(
 
     for (const raw of response.events ?? []) {
       if (typeof raw.name !== 'string') continue;
-      if (!isValidEventName(raw.name) || !isBusinessEvent(raw.name)) continue;
+      if (!isValidEventName(raw.name)) continue;
 
       const sourceInteractions = Array.isArray(raw.sourceInteractions)
         ? raw.sourceInteractions.filter((v): v is number => typeof v === 'number')
@@ -172,7 +170,7 @@ async function llmSynthesis(
     if (coveredIndices.has(i)) continue;
     const interaction = interactions[i];
     const name = guessEventName(interaction);
-    if (!name || !isValidEventName(name) || !isBusinessEvent(name)) continue;
+    if (!name || !isValidEventName(name)) continue;
     uncovered.push({
       name,
       description: `${interaction.type}: ${interaction.functionName}`,
@@ -316,7 +314,7 @@ function groupBusinessEdits(events: SynthesizedEvent[]): SynthesizedEvent[] {
 
   for (const ev of events) {
     const key = `${ev.location.file}::${extractObject(ev.name)}`;
-    if (!isValidEventName(ev.name) || !isBusinessEvent(ev.name)) {
+    if (!isValidEventName(ev.name)) {
       passthrough.push(ev);
       continue;
     }
@@ -338,7 +336,7 @@ function groupBusinessEdits(events: SynthesizedEvent[]): SynthesizedEvent[] {
     }
     const object = key.split('::')[1] || 'item';
     const name = `${object}_edited`;
-    if (!isValidEventName(name) || !isBusinessEvent(name)) {
+    if (!isValidEventName(name)) {
       out.push(...list);
       continue;
     }
@@ -595,7 +593,7 @@ function guessFromUiHint(interaction: RawInteraction): string | null {
 
   const pastVerb = toPastTense(verb);
   const candidate = `${object}_${pastVerb}`;
-  if (!isValidEventName(candidate) || !isBusinessEvent(candidate)) return null;
+  if (!isValidEventName(candidate)) return null;
   return candidate;
 }
 
