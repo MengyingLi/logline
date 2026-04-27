@@ -140,9 +140,12 @@ export async function scanCommand(options: {
   });
   if (synthSpinner) synthSpinner.succeed(`${synthesized.length} events identified`);
 
+  // Post-synthesis: deduplicate same-named events, keeping the best source
+  const deduped = deduplicateSynthesizedBySource(synthesized);
+
   // Stage 6: Refine locations for events that don't have a concrete one
   const existingNames = new Set(inventory.existingEvents.map((e) => e.name.toLowerCase()));
-  const newEvents = synthesized.filter((e) => !existingNames.has(e.name.toLowerCase()));
+  const newEvents = deduped.filter((e) => !existingNames.has(e.name.toLowerCase()));
 
   const locSpinner = spinnersEnabled && newEvents.length > 0 ? ora('Refining event locations...').start() : null;
   for (const event of newEvents) {
@@ -170,6 +173,39 @@ export async function scanCommand(options: {
   result = await attachConventionCoverage(result, files);
   writeCache(cachePath, { codebaseHash, optionsKey, version: SCAN_CACHE_VERSION, result });
   return result;
+}
+
+// ─── Deduplication ───
+
+/**
+ * When multiple synthesized events share the same name, keep only the one from the
+ * highest-priority source. Priority: UI component > API route > hook > lib/util > other.
+ * Within the same priority tier, keep the higher-confidence event.
+ */
+function deduplicateSynthesizedBySource(events: SynthesizedEvent[]): SynthesizedEvent[] {
+  const sourceRank = (file: string): number => {
+    if (/\/(components?|pages?|app|views?|screens?|features?|ui)\//i.test(file)) return 0;
+    if (/\/(api|routes?)\//i.test(file)) return 1;
+    if (/\/hooks?\//i.test(file)) return 2;
+    if (/\/(lib|utils?|helpers?|services?)\//i.test(file)) return 3;
+    return 4;
+  };
+
+  const byName = new Map<string, SynthesizedEvent>();
+  for (const event of events) {
+    const key = event.name.toLowerCase();
+    const existing = byName.get(key);
+    if (!existing) {
+      byName.set(key, event);
+    } else {
+      const existingRank = sourceRank(existing.location?.file ?? '');
+      const newRank = sourceRank(event.location?.file ?? '');
+      if (newRank < existingRank || (newRank === existingRank && (event.location?.confidence ?? 0) > (existing.location?.confidence ?? 0))) {
+        byName.set(key, event);
+      }
+    }
+  }
+  return Array.from(byName.values());
 }
 
 // ─── Converters ───

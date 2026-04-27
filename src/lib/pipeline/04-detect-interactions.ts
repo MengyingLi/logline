@@ -150,11 +150,21 @@ function detectHandlerDeclarations(file: FileContent, content: string, lines: st
 
 // ─── 3. Route Handlers ───────────────────────────────────────────────────────
 
+/** File path segments that indicate background infrastructure, not user-facing handlers */
+const BACKGROUND_JOB_PATH = /\/(cron|jobs|workers|queues|tasks|scheduler)\//i;
+
 /**
  * Finds HTTP route handlers: Express/Fastify/Hono style and Next.js App/Pages Router.
+ * Skips files in background job directories (cron, workers, etc.) that have no UI triggers.
  */
 function detectRouteHandlers(file: FileContent, content: string, lines: string[]): RawInteraction[] {
   const results: RawInteraction[] = [];
+
+  // Background job files — skip unless the file also contains UI trigger patterns
+  if (BACKGROUND_JOB_PATH.test(file.path)) {
+    const hasUITrigger = /\bon(Click|Submit)\s*[={]/i.test(content);
+    if (!hasUITrigger) return results;
+  }
 
   // Express/Fastify/Hono: (router|app).(post|get|…)('/path', …)
   const expressPattern = /(?:router|app)\.(post|get|put|patch|delete)\s*\(\s*['"`]([^'"`]+)['"`]/gi;
@@ -252,11 +262,19 @@ const CRUD_NON_ENTITY_ARGS = new Set([
  * detectGenericCRUD skips any match whose resolved entity is in this set.
  */
 const CRUD_SKIP_OBJECTS = new Set([
+  // JS built-ins / DOM
   'map', 'set', 'array', 'object', 'document', 'window', 'console',
   'element', 'node', 'classlist', 'urlsearchparams', 'headers',
   'formdata', 'searchparams', 'cache', 'store', 'state', 'ref',
   'event', 'error', 'promise', 'json', 'math', 'date', 'regexp',
   'localstorage', 'sessionstorage', 'history', 'location', 'navigator',
+  // Infrastructure / framework entities — not user-facing business events
+  'token', 'cookie', 'session', 'query', 'param', 'header',
+  'listener', 'observer', 'handler', 'middleware', 'interceptor',
+  'timer', 'interval', 'timeout', 'subscription', 'socket',
+  'log', 'metric', 'span', 'trace',
+  'file', 'directory', 'path', 'stream', 'buffer',
+  'lock', 'mutex', 'semaphore',
 ]);
 
 /**

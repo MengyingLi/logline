@@ -79,7 +79,15 @@ export async function initCommand(options: { cwd?: string }): Promise<void> {
       },
       scan: {
         include,
-        exclude: ['**/*.test.*', '**/*.spec.*', '**/node_modules/**'],
+        exclude: [
+          '**/*.test.*', '**/*.spec.*', '**/*.stories.*',
+          '**/node_modules/**', '**/__tests__/**', '**/__mocks__/**',
+          '**/fixtures/**', '**/test-utils/**',
+          '**/scripts/**', '**/migrations/**', '**/seed.*', '**/seed/**',
+          '**/playwright/**', '**/e2e/**', '**/cypress/**',
+          '**/cron/**', '**/jobs/**', '**/workers/**', '**/queues/**',
+          '**/tasks/**', '**/scheduler/**',
+        ],
       },
     };
     fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
