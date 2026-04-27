@@ -3,6 +3,49 @@ import * as path from 'path';
 import chalk from 'chalk';
 import { createEmptyTrackingPlan, writeTrackingPlan, getTrackingPlanPath } from '../lib/utils/tracking-plan';
 
+function distributeSkillFile(cwd: string): void {
+  const skillSrc = path.join(__dirname, '../../skills/SKILL.md');
+  if (!fs.existsSync(skillSrc)) return;
+  const skillContent = fs.readFileSync(skillSrc, 'utf8');
+
+  // Check if any skill file already exists
+  const claudeSkillPath = path.join(cwd, '.claude/skills/logline.md');
+  const cursorRulePath = path.join(cwd, '.cursor/rules/logline.mdc');
+  const windsurfRulePath = path.join(cwd, '.windsurf/rules/logline.md');
+
+  const hasCursor = fs.existsSync(path.join(cwd, '.cursor')) || fs.existsSync(path.join(cwd, '.cursorrules'));
+  const hasWindsurf = fs.existsSync(path.join(cwd, '.windsurf')) || fs.existsSync(path.join(cwd, '.windsurfrules'));
+
+  const alreadyExists =
+    fs.existsSync(claudeSkillPath) ||
+    (hasCursor && fs.existsSync(cursorRulePath)) ||
+    (hasWindsurf && fs.existsSync(windsurfRulePath));
+
+  if (alreadyExists) {
+    console.log(`  ${chalk.green('✓')} AI assistant skills already configured`);
+    return;
+  }
+
+  // Always write Claude skill
+  fs.mkdirSync(path.dirname(claudeSkillPath), { recursive: true });
+  fs.writeFileSync(claudeSkillPath, skillContent);
+  console.log(`  ${chalk.green('✓')} Created .claude/skills/logline.md`);
+
+  // Write Cursor rule if .cursor/ or .cursorrules exists
+  if (hasCursor) {
+    fs.mkdirSync(path.dirname(cursorRulePath), { recursive: true });
+    fs.writeFileSync(cursorRulePath, skillContent);
+    console.log(`  ${chalk.green('✓')} Created .cursor/rules/logline.mdc`);
+  }
+
+  // Write Windsurf rule if .windsurf/ or .windsurfrules exists
+  if (hasWindsurf) {
+    fs.mkdirSync(path.dirname(windsurfRulePath), { recursive: true });
+    fs.writeFileSync(windsurfRulePath, skillContent);
+    console.log(`  ${chalk.green('✓')} Created .windsurf/rules/logline.md`);
+  }
+}
+
 function detectSourceDirs(cwd: string): string[] {
   const exts = ['ts', 'tsx', 'js', 'jsx'];
   const candidates = ['src', 'app', 'apps', 'pages', 'lib', 'packages'];
@@ -59,7 +102,10 @@ export async function initCommand(options: { cwd?: string }): Promise<void> {
     console.log(`  ${chalk.green('✓')} Created .logline/.gitignore (ignores cache/)`);
   }
 
-  // 5. Print next steps
+  // 5. Distribute AI assistant skill files
+  distributeSkillFile(cwd);
+
+  // 6. Print next steps
   console.log();
   console.log(chalk.bold('Logline initialized! Next steps:'));
   console.log();
