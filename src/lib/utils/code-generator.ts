@@ -2,6 +2,107 @@ import type { TrackingGap } from '../discovery/tracking-gap-detector';
 import type { SignalType } from '../types';
 import { analyzeScope, type ScopeVariable } from './scope-analyzer';
 
+// ─── useMutation detection ────────────────────────────────────────────────────
+
+export interface MutationContext {
+  found: boolean;
+  hasOnSuccess: boolean;
+  /** 1-indexed line of the first body line inside an existing onSuccess callback */
+  onSuccessBodyLine: number | null;
+  /** 1-indexed line of the useMutation closing `});` — insert new onSuccess just before it */
+  mutationClosingLine: number | null;
+  /** Typed props extracted from `async (arg: { prop: type }) =>` in the mutationFn */
+  typedParams: Array<{ name: string; type: string }>;
+  /** Whether the mutationFn destructs a `data` return from a DB call */
+  hasDataReturn: boolean;
+}
+
+/**
+ * Detect whether a given line is inside a useMutation hook and extract
+ * structural information needed to place track() in the onSuccess callback.
+ *
+ * Searches ≤60 lines backward for `useMutation(`, then scans forward tracking
+ * brace depth to find the closing `});` and any existing `onSuccess:` block.
+ */
+export function detectUseMutation(fileContent: string, nearLine: number): MutationContext {
+  const none: MutationContext = {
+    found: false, hasOnSuccess: false,
+    onSuccessBodyLine: null, mutationClosingLine: null,
+    typedParams: [], hasDataReturn: false,
+  };
+
+  const lines = fileContent.split('\n');
+  const targetIdx = Math.max(0, nearLine - 1); // 0-indexed
+
+  // Search backward for useMutation(
+  let mutationStartIdx: number | null = null;
+  const searchBack = Math.max(0, targetIdx - 60);
+  for (let i = targetIdx; i >= searchBack; i--) {
+    if (/\buseMutation\s*\(/.test(lines[i])) {
+      mutationStartIdx = i;
+      break;
+    }
+  }
+  if (mutationStartIdx === null) return none;
+
+  // Scan forward from mutationStartIdx tracking brace depth.
+  // Start at 0 — the opening `{` of the useMutation object literal increments to 1.
+  let depth = 0;
+  let onSuccessIdx: number | null = null;
+  let mutationEndIdx: number | null = null;
+
+  for (let i = mutationStartIdx; i < Math.min(lines.length, mutationStartIdx + 150); i++) {
+    const line = lines[i];
+    if (onSuccessIdx === null && /\bonSuccess\s*:/.test(line)) onSuccessIdx = i;
+    for (const ch of line) {
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0 && i > mutationStartIdx) { mutationEndIdx = i; break; }
+      }
+    }
+    if (mutationEndIdx !== null) break;
+  }
+
+  if (mutationEndIdx === null) return none;
+
+  // Find the first body line of the onSuccess callback.
+  let onSuccessBodyLine: number | null = null;
+  if (onSuccessIdx !== null) {
+    for (let i = onSuccessIdx; i < Math.min(lines.length, onSuccessIdx + 6); i++) {
+      if (lines[i].includes('{')) {
+        onSuccessBodyLine = i + 2; // 1-indexed: line after the opening `{`
+        break;
+      }
+    }
+  }
+
+  // Extract typed params from `async (arg: { prop: type }) =>`
+  const mutationContent = lines.slice(mutationStartIdx, mutationEndIdx + 1).join('\n');
+  const typedParams: Array<{ name: string; type: string }> = [];
+  const typedMatch = mutationContent.match(
+    /(?:mutationFn\s*:\s*)?async\s*\(\s*\w+\s*:\s*\{([^}]+)\}\s*\)\s*=>/
+  );
+  if (typedMatch) {
+    for (const field of typedMatch[1].split(/[;,]/)) {
+      const fm = field.trim().match(/^(\w+)\??\s*:\s*(.+)$/);
+      if (!fm || !fm[1] || fm[1].length < 2) continue;
+      typedParams.push({ name: fm[1].trim(), type: fm[2].trim() });
+    }
+  }
+
+  const hasDataReturn = /const\s*\{\s*data\b/.test(mutationContent);
+
+  return {
+    found: true,
+    hasOnSuccess: onSuccessIdx !== null,
+    onSuccessBodyLine,
+    mutationClosingLine: mutationEndIdx + 1, // 1-indexed
+    typedParams,
+    hasDataReturn,
+  };
+}
+
 export function generateTrackingCode(
   gap: TrackingGap,
   fileContent?: string,
@@ -13,7 +114,8 @@ export function generateTrackingCode(
   }
 ): string {
   const targetLine = effectiveLine ?? gap.location?.line ?? 0;
-  const props = fileContent ? inferProperties(gap, fileContent, targetLine) : inferPropertiesFallback(gap);
+  const mutCtx = fileContent ? detectUseMutation(fileContent, targetLine) : null;
+  const props = fileContent ? inferProperties(gap, fileContent, targetLine, mutCtx) : inferPropertiesFallback(gap);
   const signalType = options?.signalType ?? gap.signalType ?? 'action';
   const fn = options?.functionName?.trim() ? options.functionName.trim() : 'track';
   const loggerName = options?.logging?.instanceName ?? 'logger';
@@ -24,35 +126,40 @@ export function generateTrackingCode(
         .map((p) => `  ${p.name}: ${p.value},${p.todo ? ' // TODO: verify' : ''}`)
         .join('\n');
 
+  let trackCall: string;
   if (signalType === 'operation') {
-    return `// Logline: ${gap.suggestedEvent}
+    trackCall = `// Logline: ${gap.suggestedEvent}
 ${loggerName}.info('${gap.suggestedEvent}', {
 ${propsStr}
 });`;
-  }
-
-  if (signalType === 'error') {
-    return `// Logline: ${gap.suggestedEvent}
+  } else if (signalType === 'error') {
+    trackCall = `// Logline: ${gap.suggestedEvent}
 ${loggerName}.error('${gap.suggestedEvent}', {
 ${propsStr}
 });`;
-  }
-
-  if (signalType === 'state_change') {
-    return `// Logline: ${gap.suggestedEvent}
+  } else if (signalType === 'state_change') {
+    trackCall = `// Logline: ${gap.suggestedEvent}
 ${fn}('${gap.suggestedEvent}', {
 ${propsStr}
 });
 ${loggerName}.info('${gap.suggestedEvent}', {
 ${propsStr}
 });`;
-  }
-
-  // default: action → track()
-  return `// Logline: ${gap.suggestedEvent}
+  } else {
+    // default: action → track()
+    trackCall = `// Logline: ${gap.suggestedEvent}
 ${fn}('${gap.suggestedEvent}', {
 ${propsStr}
 });`;
+  }
+
+  // For useMutation without an existing onSuccess, wrap in an onSuccess callback.
+  if (mutCtx?.found && !mutCtx.hasOnSuccess) {
+    const inner = trackCall.split('\n').map((l) => `  ${l}`).join('\n');
+    return `onSuccess: (data, variables) => {\n${inner}\n},`;
+  }
+
+  return trackCall;
 }
 
 /**
@@ -69,8 +176,14 @@ const SKIP_INTERNAL_PROPS = new Set(['__typename', 'loading', 'error', 'isLoadin
 function inferProperties(
   gap: TrackingGap,
   fileContent: string,
-  targetLine: number
+  targetLine: number,
+  mutCtx?: MutationContext | null
 ): Array<{ name: string; value: string; todo: boolean }> {
+  // For useMutation hooks, use data/variables as property sources.
+  if (mutCtx?.found) {
+    return inferMutationProperties(gap, mutCtx);
+  }
+
   const scope = analyzeScope(fileContent, targetLine);
   const props: Array<{ name: string; value: string; todo: boolean }> = [];
   const eventParts = gap.suggestedEvent.split('_');
@@ -132,6 +245,49 @@ function inferProperties(
   }
 
   // 4) Changes array for "edited" events
+  if (gap.suggestedEvent.endsWith('_edited') && gap.includes?.length) {
+    props.push({
+      name: 'changes',
+      value: `[${gap.includes.map((c) => `'${c}'`).join(', ')}]`,
+      todo: false,
+    });
+  }
+
+  return props;
+}
+
+/**
+ * Property inference for useMutation hooks.
+ * In onSuccess callbacks, `data` is the server return value and
+ * `variables` is the input passed to mutate(). We always use these
+ * standard names regardless of what the mutationFn parameter is called.
+ */
+function inferMutationProperties(
+  gap: TrackingGap,
+  mutCtx: MutationContext
+): Array<{ name: string; value: string; todo: boolean }> {
+  const props: Array<{ name: string; value: string; todo: boolean }> = [];
+  const eventParts = gap.suggestedEvent.split('_');
+  const objectName = eventParts.slice(0, -1).join('_') || 'unknown';
+
+  // Input properties from typed mutationFn params → variables.prop in onSuccess
+  const useful = mutCtx.typedParams.filter((p) => USEFUL_PROPS.has(p.name)).slice(0, 4);
+  for (const param of useful) {
+    props.push({ name: param.name, value: `variables.${param.name}`, todo: false });
+  }
+  // All remaining non-skipped params not already included
+  for (const param of mutCtx.typedParams) {
+    if (SKIP_INTERNAL_PROPS.has(param.name)) continue;
+    if (props.some((p) => p.name === param.name)) continue;
+    props.push({ name: param.name, value: `variables.${param.name}`, todo: false });
+  }
+
+  // Entity ID from the DB return value (data?.id)
+  if (mutCtx.hasDataReturn && objectName !== 'unknown') {
+    props.push({ name: `${objectName}_id`, value: 'data?.id', todo: false });
+  }
+
+  // Changes array for _edited events
   if (gap.suggestedEvent.endsWith('_edited') && gap.includes?.length) {
     props.push({
       name: 'changes',

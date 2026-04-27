@@ -629,12 +629,17 @@ export function extractPropertiesFromInteraction(
   // Pass 1: typed inline parameter
   //   mutationFn: async (arg: { email: string; role: 'admin' | 'member' }) =>
   //   async (arg: { email: string }) =>
+  //   In onSuccess callbacks, the input is always `variables`, so we use that
+  //   as the access path regardless of the actual arg name.
   const typedMatch = body.match(
     /(?:mutationFn\s*:\s*)?async\s*\(\s*(\w+)\s*:\s*\{([^}]+)\}\s*\)\s*=>/
   );
+  const isMutationFn = /\buseMutation\s*\(/.test(body);
   if (typedMatch) {
     const argName = typedMatch[1];
     const typeBody = typedMatch[2];
+    // In useMutation context the input is accessed via `variables` in onSuccess.
+    const accessPrefix = isMutationFn ? 'variables' : argName;
     for (const field of typeBody.split(/[;,]/)) {
       const fm = field.trim().match(/^(\w+)\??\s*:\s*(.+)$/);
       if (!fm) continue;
@@ -644,8 +649,8 @@ export function extractPropertiesFromInteraction(
         name,
         type: normalizePropertyType(fm[2]),
         required: !field.trim().includes('?:'),
-        description: `from ${argName} parameter`,
-        accessPath: `${argName}.${name}`,
+        description: `from ${accessPrefix} parameter`,
+        accessPath: `${accessPrefix}.${name}`,
         verified: true,
       });
     }
