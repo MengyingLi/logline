@@ -9,8 +9,9 @@
     "start": "next start"
   },
   "dependencies": {
-    "logline-cli": "file:../..",
     "@octokit/webhooks": "^13.3.0",
+    "@supabase/supabase-js": "^2.105.0",
+    "logline-cli": "file:../..",
     "next": "^15.0.0",
     "octokit": "^4.0.2",
     "react": "^18.3.1",

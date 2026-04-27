@@ -100,6 +100,7 @@ export async function handleMergedPullRequest(payload: PullRequestPayload): Prom
     repo,
     baseBranch,
     implementedEvents,
+    installationId,
   });
 }
 

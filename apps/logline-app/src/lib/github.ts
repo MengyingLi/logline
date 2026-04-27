@@ -1,6 +1,50 @@
 import { Octokit } from 'octokit';
 import { createSign } from 'node:crypto';
 
+export interface GitHubInstallation {
+  id: number;
+  account: { login: string; type: string };
+}
+
+/** Fetch installation metadata from GitHub using the App JWT. */
+export async function getGitHubInstallation(installationId: number): Promise<GitHubInstallation> {
+  const appId = process.env.GITHUB_APP_ID;
+  const privateKey = normalizePrivateKey(process.env.GITHUB_PRIVATE_KEY);
+  if (!appId || !privateKey) throw new Error('Missing GITHUB_APP_ID or GITHUB_PRIVATE_KEY');
+  const jwt = createAppJwt(appId, privateKey);
+  const res = await fetch(`https://api.github.com/app/installations/${installationId}`, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${jwt}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'logline-app',
+    },
+  });
+  if (!res.ok) throw new Error(`GitHub installation fetch error: ${res.status}`);
+  return res.json() as Promise<GitHubInstallation>;
+}
+
+/** List repos accessible under an installation. */
+export async function listInstallationRepos(
+  installationId: number
+): Promise<Array<{ owner: string; name: string }>> {
+  const octokit = await getInstallationOctokit(installationId);
+  const repos: Array<{ owner: string; name: string }> = [];
+  let page = 1;
+  while (page <= 10) {
+    const res = await octokit.request('GET /installation/repositories', {
+      per_page: 100,
+      page,
+    });
+    for (const r of res.data.repositories) {
+      repos.push({ owner: r.owner.login, name: r.name });
+    }
+    if (res.data.repositories.length < 100) break;
+    page++;
+  }
+  return repos;
+}
+
 export function getAppOctokit(token?: string): Octokit {
   return new Octokit(token ? { auth: token } : {});
 }

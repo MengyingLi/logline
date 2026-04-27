@@ -1,4 +1,5 @@
 import type { TrackingPlan } from 'logline-cli';
+import { updateTrackingPlan, enrollRepo } from '@/lib/db';
 
 export async function syncTrackingPlan(args: {
   octokit: any;
@@ -6,6 +7,7 @@ export async function syncTrackingPlan(args: {
   repo: string;
   baseBranch: string;
   implementedEvents: string[];
+  installationId?: number;
 }): Promise<void> {
   const uniqueImplemented = Array.from(new Set(args.implementedEvents.map((x) => x.toLowerCase())));
   if (uniqueImplemented.length === 0) return;
@@ -28,6 +30,16 @@ export async function syncTrackingPlan(args: {
   plan.coverage = recalcCoverage(plan);
   plan.generatedAt = nowIso;
   plan.generatedBy = 'logline-app';
+
+  // Mirror updated plan to Supabase for the dashboard
+  await updateTrackingPlan(args.owner, args.repo, plan).catch((err) => {
+    console.warn('[logline-app] DB tracking-plan sync failed (non-fatal):', err);
+  });
+
+  // If repo not yet enrolled, do it now (lazy enrollment)
+  if (args.installationId) {
+    await enrollRepo(args.installationId, args.owner, args.repo).catch(() => null);
+  }
 
   const branch = `logline/sync-tracking-plan-${Date.now()}`;
   await createBranch(args.octokit, args.owner, args.repo, args.baseBranch, branch);
