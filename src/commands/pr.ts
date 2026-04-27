@@ -467,10 +467,24 @@ export function insertTracking(content: string, targetLine: number, trackingCode
 }
 
 export function ensureTrackImport(content: string, filePath: string, importPath: string, functionName: string): string {
+  // If importPath is a relative dotfile path (e.g. ".logline/track"), compute the
+  // relative path from the source file being modified to that module.
+  let resolvedImport = importPath;
+  if (importPath.startsWith('.logline/') || importPath.startsWith('./.logline/')) {
+    const normalised = importPath.replace(/^\.\//, '');
+    // filePath is a repo-relative path like "src/components/Foo.tsx"
+    const fromDir = path.dirname(filePath);
+    const relPath = path.relative(fromDir, normalised);
+    // Ensure it starts with "./" or "../"
+    resolvedImport = relPath.startsWith('.') ? relPath : `./${relPath}`;
+    // Strip the .ts extension if present (import paths should not have it)
+    resolvedImport = resolvedImport.replace(/\.ts$/, '');
+  }
+
   const hasImport =
     new RegExp(`import\\s+\\{[^}]*\\b${escapeRegExp(functionName)}\\b[^}]*\\}`).test(content) ||
-    content.includes(`from '${importPath}'`) ||
-    content.includes(`from "${importPath}"`);
+    content.includes(`from '${resolvedImport}'`) ||
+    content.includes(`from "${resolvedImport}"`);
   if (hasImport) return content;
 
   const lines = content.split('\n');
@@ -479,7 +493,7 @@ export function ensureTrackImport(content: string, filePath: string, importPath:
     if (lines[i].trim().startsWith('import ')) lastImportIndex = i;
   }
 
-  const importLine = `import { ${functionName} } from '${importPath}';`;
+  const importLine = `import { ${functionName} } from '${resolvedImport}';`;
 
   if (lastImportIndex >= 0) {
     lines.splice(lastImportIndex + 1, 0, importLine);

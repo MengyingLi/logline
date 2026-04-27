@@ -73,8 +73,8 @@ export async function initCommand(options: { cwd?: string }): Promise<void> {
     const defaultConfig = {
       eventGranularity: 'business',
       tracking: {
-        destination: 'custom',
-        importPath: '@/lib/analytics',
+        destination: 'logline',
+        importPath: '.logline/track',
         functionName: 'track',
       },
       scan: {
@@ -110,7 +110,24 @@ export async function initCommand(options: { cwd?: string }): Promise<void> {
     console.log(`  ${chalk.green('✓')} Created .logline/.gitignore (ignores cache/)`);
   }
 
-  // 5. Distribute AI assistant skill files
+  // 5. Create .logline/track.ts if it doesn't exist
+  const trackPath = path.join(loglineDir, 'track.ts');
+  if (!fs.existsSync(trackPath)) {
+    const trackContent = [
+      `import { init, track } from 'logline-cli/sdk';`,
+      ``,
+      `init({ apiKey: process.env.LOGLINE_API_KEY ?? 'lk_your_key_here' });`,
+      ``,
+      `export { track };`,
+      ``,
+    ].join('\n');
+    fs.writeFileSync(trackPath, trackContent);
+    console.log(`  ${chalk.green('✓')} Created .logline/track.ts — ${chalk.cyan("import { track } from './.logline/track'")}`);
+  } else {
+    console.log(`  ${chalk.dim('→')} .logline/track.ts already exists, skipping`);
+  }
+
+  // 6. Distribute AI assistant skill files
   distributeSkillFile(cwd);
 
   // 6. Print next steps
