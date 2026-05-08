@@ -3,237 +3,194 @@
 [![npm version](https://img.shields.io/npm/v/logline-cli.svg)](https://www.npmjs.com/package/logline-cli)
 [![CI](https://github.com/MengyingLi/logline/actions/workflows/ci.yml/badge.svg)](https://github.com/MengyingLi/logline/actions)
 
-**Semantic layer for product analytics.** Logline scans your codebase, understands your product's domain, and generates a machine-readable tracking plan — the contract between your product code, data pipelines, and AI agents.
+**Automated product analytics instrumentation.** Logline scans your codebase, understands your product's domain model, and generates a machine-readable tracking plan — then instruments the code for you.
 
 ```
-Your Code  →  logline scan + spec  →  tracking-plan.json
-                                             ↓
-                              Segment / Amplitude / OTel
-                              AI agents (LangChain, LangGraph)
-                              dbt / GlassFlow / BI tools
+logline scan    →  finds what's missing
+logline spec    →  writes tracking-plan.json
+logline apply   →  inserts track() calls into your code
 ```
-
-## Why Logline
-
-Every product analytics stack has the same gap: events arrive, but nothing tells your pipelines or AI agents what those events *mean* — what objects they describe, how they relate to each other, what sequences constitute success.
-
-`tracking-plan.json` is that missing piece:
-- **Event definitions** with properties and types → agents know how to parse events
-- **Actor/object relationships** → agents know the JOIN paths to correlate events
-- **Lifecycle states** → agents know what sequences to expect
-- **Metric definitions** → agents can answer product questions without being prompted
 
 ## Quick Start
 
 ```bash
-# Install globally
 npm install -g logline-cli
 
-# Or run once via npx
-npx logline-cli init
-
-# Set your OpenAI API key (skip for --fast mode)
-export OPENAI_API_KEY=sk-...
-
-# Run in your project
 cd /path/to/your-project
-logline init           # initialize .logline/
+logline init           # interactive setup: choose destination, paste API key
 logline scan --fast    # detect missing events (no API key needed)
 logline spec           # write .logline/tracking-plan.json
-logline pr --dry-run   # preview instrumentation
-logline pr             # create PR
+logline apply          # interactively instrument your code
 ```
 
-### Development
-
-```bash
-git clone https://github.com/MengyingLi/logline
-cd logline && npm install && npm run build && npm link
-```
+> **OpenAI API key** is optional. `--fast` mode uses regex-only detection — free, instant, no external calls. Set `OPENAI_API_KEY` for LLM-powered event synthesis.
 
 ## Example Output
 
 ```
-$ logline scan
+$ logline scan --fast
 
-📊 Product Profile
-   Mission: Workflow automation for teams
-   Key Metrics: workflows_created, workflow_executions
-   Confidence: 87%
+Gaps — 5 events to instrument
 
-🎯 Event Coverage: 12% (2 tracked / 14 suggested)
+  ✗ workflow_created      src/app/workflows.tsx:45      critical
+  ✗ plan_upgraded         src/app/billing.tsx:112       high
+  ✗ member_invited        src/app/team.tsx:67           high
+  ✗ comment_created       src/app/comments.tsx:23       medium
+  ✗ search_performed      src/components/Search.tsx:14  medium
 
-Critical Events (track these first):
-  ✗ workflow_created       src/pages/NewWorkflow.tsx:42
-                           Fired when user creates a new workflow
-  ✗ workflow_completed     src/components/WorkflowRunner.tsx:88
-                           Fired when a workflow run finishes
+✓ Tracking: segment_identified · page_viewed · signup_completed  and 3 more
 
-High Priority:
-  ✗ step_configured        src/components/StepConfigPanel.tsx:25
-                           Includes: mapping_added, trigger_selected, action_configured
-  ✗ template_selected      src/pages/Index.tsx:160
-
-Already Tracked:
-  ✓ workflow_edited        src/components/StepConfigPanel.tsx:103
-  ✓ user_signed_up         src/auth/callback.ts:15
-
-Run `logline spec` to update your tracking plan.
+Coverage  ████████░░░░░░░░░░░░  34%  8 tracked · 15 gaps
+Run `logline spec` to save to tracking plan, then `logline apply` to instrument.
 ```
+
+```
+$ logline apply
+
+──────────────────────────────────────────────
+[1/5] workflow_created  (critical)
+src/app/workflows.tsx:45
+
+ 43 │   async function handleSubmit(data: WorkflowInput) {
+ 44 │     const workflow = await createWorkflow(data);
+    │     track('workflow_created', { workflow_id: workflow.id, name: data.name });
+ 45 │     router.push(`/workflows/${workflow.id}`);
+
+[a]ccept  [s]kip  [e]dit name  [q]uit
+> a
+✓ Applied workflow_created to src/app/workflows.tsx
+```
+
+## Logline Cloud
+
+Connect track calls to the Logline dashboard for live event stream, tracking plan coverage, and drift detection.
+
+```bash
+logline init   # choose "Logline Cloud", paste your lk_... key
+```
+
+This creates `.logline/track.ts`:
+
+```typescript
+import { init, track } from 'logline-cli/sdk';
+init({ apiKey: process.env.LOGLINE_API_KEY ?? 'lk_...' });
+export { track };
+```
+
+`logline apply` automatically imports from `.logline/track` — no manual wiring needed.
+
+Or send events directly:
+
+```bash
+curl -X POST https://logline.dev/api/v1/events/ingest \
+  -H "Authorization: Bearer lk_..." \
+  -H "Content-Type: application/json" \
+  -d '{"event": "workflow_created", "properties": {"workflow_id": "abc"}}'
+```
+
+Fan-out to Segment, PostHog, Mixpanel, or Amplitude is configured per-repo in the dashboard.
 
 ## Tracking Plan Format
 
-`logline spec` generates `.logline/tracking-plan.json`:
+`logline spec` writes `.logline/tracking-plan.json`:
 
 ```json
 {
   "version": "1.0",
-  "generatedAt": "2026-03-27T00:00:00.000Z",
-  "generatedBy": "logline@0.1.0",
-  "product": {
-    "mission": "Workflow automation for teams",
-    "keyMetrics": ["workflows_created", "workflow_executions"]
-  },
   "events": [
     {
       "id": "evt_a3f7c12d",
-      "name": "step_configured",
-      "description": "User configured a step in their workflow",
+      "name": "workflow_created",
       "actor": "User",
-      "object": "Step",
-      "action": "configured",
-      "priority": "high",
-      "status": "suggested",
+      "object": "Workflow",
+      "action": "created",
+      "priority": "critical",
+      "status": "approved",
       "properties": [
-        { "name": "step_id",     "type": "string", "required": true },
-        { "name": "workflow_id", "type": "string", "required": true,  "todo": true },
-        { "name": "user_id",     "type": "string", "required": true },
-        { "name": "user_id",     "type": "string", "required": false, "todo": true,
-          "description": "ID of the grandparent User (for cross-entity correlation)" }
+        { "name": "workflow_id", "type": "string", "required": true },
+        { "name": "name",        "type": "string", "required": true },
+        { "name": "user_id",     "type": "string", "required": true }
       ],
-      "locations": [{ "file": "src/components/StepConfigPanel.tsx", "line": 25 }],
-      "includes": ["mapping_added", "trigger_selected", "action_configured"],
-      "firstSeen": "2026-03-27T00:00:00.000Z",
-      "lastSeen": "2026-03-27T00:00:00.000Z"
+      "locations": [{ "file": "src/app/workflows.tsx", "line": 45 }]
     }
   ],
   "context": {
     "actors": [{ "name": "User", "type": "user" }],
     "objects": [
-      { "name": "Workflow", "source": "prisma", "properties": ["id"] },
-      { "name": "Step",     "source": "prisma", "properties": ["id"], "belongsTo": ["Workflow"] }
-    ],
-    "relationships": [
-      { "child": "Step", "parent": "Workflow", "relationship": "belongs_to" }
-    ],
-    "lifecycles": [
-      { "object": "Workflow", "states": ["draft", "active", "completed"] }
+      { "name": "Workflow", "source": "prisma", "belongsTo": [] },
+      { "name": "Step",     "source": "prisma", "belongsTo": ["Workflow"] }
     ],
     "joinPaths": [
-      { "from": "Step", "to": "Workflow", "via": ["Step.workflow_id → Workflow.id"] },
-      { "from": "Step", "to": "User",     "via": ["Step.workflow_id → Workflow.id", "Workflow.created_by → User.id"] }
+      { "from": "Step", "to": "User", "via": ["Step.workflow_id → Workflow.id", "Workflow.created_by → User.id"] }
     ],
     "expectedSequences": [
-      {
-        "name": "workflow_activation",
-        "steps": ["workflow_created", "workflow_edited", "workflow_completed"],
-        "expectedWindow": "7d",
-        "significance": "Measures whether users activate after creating a workflow"
-      }
+      { "name": "activation", "steps": ["workflow_created", "workflow_edited", "workflow_completed"], "expectedWindow": "7d" }
     ]
   },
   "metrics": [
-    {
-      "name": "workflow_completion_rate",
-      "formula": "count(event = 'workflow_completed') / nullif(count(event = 'workflow_created'), 0)",
-      "category": "activation",
-      "grain": "weekly"
-    }
-  ],
-  "coverage": { "tracked": 2, "suggested": 14, "approved": 0, "implemented": 2, "percentage": 12 }
+    { "name": "workflow_completion_rate", "formula": "count(workflow_completed) / nullif(count(workflow_created), 0)", "category": "activation" }
+  ]
 }
 ```
-
-Properties marked `"todo": true` came from the context graph (relationships, join paths) and couldn't be verified in your code's scope — you'll need to wire them up manually or verify they're available.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `logline init` | Initialize `.logline/` in your project |
+| `logline init` | Interactive setup: destination, API key, AI skill files |
 | `logline scan` | Detect missing events and coverage gaps |
-| `logline scan --fast` | Regex-only (no LLM, instant) |
-| `logline scan --granular` | Show all interactions without grouping |
-| `logline scan --verbose` | Show files, interactions, LLM previews |
+| `logline scan --fast` | Regex-only, no LLM, instant |
+| `logline scan --json` | Machine-readable output |
 | `logline spec` | Generate/update `.logline/tracking-plan.json` |
-| `logline pr` | Create PR with analytics instrumentation |
+| `logline apply` | Interactively insert `track()` calls into source files |
+| `logline approve` | Interactive review: approve / skip / reject each suggested event |
+| `logline approve --all` | Approve all suggested events at once |
+| `logline reject [event]` | Mark an event as deprecated |
+| `logline status` | Coverage bar, pending events, next action |
+| `logline pr` | Create a PR with analytics instrumentation |
 | `logline pr --dry-run` | Preview changes without creating PR |
-| `logline status` | Show tracking plan summary (no rescan) |
-| `logline approve [event]` | Mark event as approved |
-| `logline approve --all` | Approve all suggested events |
-| `logline reject [event]` | Mark event as deprecated |
-| `logline metrics` | Generate metric definitions from context |
-| `logline context` | Show product ontology (text, mermaid, json) |
+| `logline doctor` | Check Node, API keys, git, source files |
 | `logline export --format segment` | Export to Segment Protocols |
 | `logline export --format amplitude` | Export to Amplitude taxonomy |
 | `logline export --format opentelemetry` | Export OTel semantic conventions |
 | `logline export --format glassflow` | Export GlassFlow filter/transform config |
-| `logline doctor` | Check environment (Node, API key, git, gh) |
+| `logline metrics` | Generate metric definitions from context |
+| `logline context` | Show product ontology (text, mermaid, json) |
+| `logline completion --shell zsh` | Print shell completion script |
 
-## Context-Aware Property Enrichment
+## Semantic Conventions
 
-Logline uses your codebase's relationship graph to enrich event properties automatically.
+Logline detects which analytics domains your codebase uses and checks coverage against built-in event conventions:
 
-For a `step_configured` event where `Step` belongs to `Workflow`:
-- `step_id` — verified from scope
-- `workflow_id` — inferred from relationship (marked `todo: true` if not in scope)
-- `user_id` — from auth/session patterns
+| Domain | Activates when | Events covered |
+|--------|---------------|----------------|
+| `onboarding` | signup/verify/onboarding flow code | signup attempt/success/fail, email verification, onboarding steps |
+| `billing` | Stripe/Paddle imports, checkout/subscription code | trial lifecycle, plan changes, payment outcomes |
+| `search` | Algolia/Typesense imports, SearchBar components | search performed, result clicked, filters, zero results |
+| `collaboration` | invite/member/workspace code | member invited/accepted/declined, role changes, workspace lifecycle |
 
-For a `mapping_added` event where `Mapping` → `Step` → `Workflow`:
-- `mapping_id`, `step_id`, `workflow_id` — hierarchy-enriched
-- Deeper hops are marked optional
+When a domain is detected, `logline scan` shows a coverage report:
 
-## Agent Integration
-
-`tracking-plan.json` is designed to be loaded as agent context:
-
-```python
-import json
-
-with open('.logline/tracking-plan.json') as f:
-    plan = json.load(f)
-
-# Give an agent the full product ontology
-system_prompt = f"""
-You are analyzing product events for {plan['product']['mission']}.
-
-Events: {json.dumps(plan['events'], indent=2)}
-
-Entity relationships (JOIN paths):
-{json.dumps(plan['context']['joinPaths'], indent=2)}
-
-Expected sequences (for anomaly detection):
-{json.dumps(plan['context']['expectedSequences'], indent=2)}
-
-Metrics you can compute:
-{json.dumps(plan['metrics'], indent=2)}
-"""
 ```
+Convention Coverage — billing
 
-The join paths tell an agent exactly how to correlate events across entities without knowing the schema upfront. The expected sequences define what "normal" looks like — deviations are anomalies worth investigating.
+  ✗ subscription_trial_start   Trial start not instrumented — required for conversion funnel
+  ✗ payment_fail               Payment failure handler not instrumented — required for revenue recovery
+  ✓ subscription_created       src/app/billing.tsx:89
+```
 
 ## Signal Types
 
-Logline detects four types of observability signals from the same scan:
+Logline routes signals to the right destination from the same scan:
 
-| Signal | What it captures | Generated code | Destination |
-|--------|-----------------|----------------|-------------|
-| `action` | User actions (click, submit, create) | `track()` | Segment, PostHog, Mixpanel |
-| `operation` | System operations (API call, background job) | `logger.info()` | Datadog, Grafana, ELK |
-| `state_change` | Lifecycle transitions (draft → active) | Both `track()` and `logger.info()` | Analytics + Logging |
-| `error` | Failures (timeout, validation error) | `logger.error()` | Logging + Alerts |
+| Signal | Captures | Generated code | Destination |
+|--------|----------|----------------|-------------|
+| `action` | User clicks, form submits, creates | `track()` | Segment, PostHog, Mixpanel |
+| `operation` | API calls, background jobs | `logger.info()` | Datadog, Grafana |
+| `state_change` | Status transitions | `track()` + `logger.info()` | Analytics + Logging |
+| `error` | Failures, timeouts | `logger.error()` | Logging + Alerts |
 
-Same entities, same properties, same IDs — correlated by design. Configure the logging destination in `.logline/config.json`:
+Configure the logging destination in `.logline/config.json`:
 
 ```json
 {
@@ -245,77 +202,110 @@ Same entities, same properties, same IDs — correlated by design. Configure the
 }
 ```
 
-## Supported Stacks
+## Agent Integration
 
-**Frameworks:** React / Next.js · Vue (coming soon) · Express / Fastify
+`tracking-plan.json` is designed to be loaded as agent context:
 
-**Databases (for schema detection):** Supabase · Prisma · Drizzle
+```python
+import json
 
-**Analytics destinations:** Segment · PostHog · Mixpanel · Custom
+with open('.logline/tracking-plan.json') as f:
+    plan = json.load(f)
+
+system_prompt = f"""
+Product: {plan['product']['mission']}
+
+Events: {json.dumps(plan['events'], indent=2)}
+
+Entity JOIN paths:
+{json.dumps(plan['context']['joinPaths'], indent=2)}
+
+Expected sequences (anomaly detection baseline):
+{json.dumps(plan['context']['expectedSequences'], indent=2)}
+
+Metrics you can compute:
+{json.dumps(plan['metrics'], indent=2)}
+"""
+```
+
+`joinPaths` tells an agent exactly how to correlate events across entities without knowing the schema upfront. `expectedSequences` define what "normal" looks like — deviations are anomalies.
+
+## Shell Completions
+
+```bash
+# zsh
+echo 'eval "$(logline completion --shell zsh)"' >> ~/.zshrc
+
+# bash
+echo 'eval "$(logline completion --shell bash)"' >> ~/.bashrc
+
+# fish
+logline completion --shell fish > ~/.config/fish/completions/logline.fish
+```
+
+## Programmatic API
+
+Use Logline as a library in GitHub Apps, CI pipelines, or editor plugins:
+
+```typescript
+import { scanCommand, synthesizeEvents, detectInteractions } from 'logline-cli';
+
+const result = await scanCommand({ cwd: '/path/to/repo', fast: true });
+console.log(result.gaps.map(g => g.suggestedEvent));
+```
+
+Full API: [`docs/programmatic-api.md`](docs/programmatic-api.md)
 
 ## Configuration
 
-Create `.logline/config.json`:
+`.logline/config.json` (created by `logline init`):
 
 ```json
 {
   "eventGranularity": "business",
+  "tracking": {
+    "destination": "logline",
+    "importPath": ".logline/track",
+    "functionName": "track"
+  },
   "scan": {
     "include": ["src/**/*.{ts,tsx,js,jsx}"],
-    "exclude": ["**/*.test.*", "**/node_modules/**"]
-  },
-  "tracking": {
-    "destination": "segment"
+    "exclude": ["**/*.test.*", "**/node_modules/**", "**/scripts/**"]
   }
 }
 ```
 
-## Documentation
+## Requirements
 
-- `docs/tracking-plan-format.md`
-- `docs/how-it-works.md`
-- `docs/configuration.md`
-- `docs/conventions.md`
-- `docs/agent-integration.md`
-- `docs/programmatic-api.md`
+- Node.js 20+
+- OpenAI API key — optional, enables LLM-powered event synthesis (`--fast` works without it)
+- Git — for `logline pr`
+- GitHub CLI `gh` — for auto PR creation
 
 ## Development
 
 ```bash
 git clone https://github.com/MengyingLi/logline
-cd logline && npm install
+cd logline && npm install && npm run build && npm link
 
-# Build and link for local testing
-npm run build && npm link
-
-# Run in a test project
-cd /path/to/test-project && logline doctor
+# Test in any project
+cd /path/to/test-project
+logline doctor
 ```
-
-## Requirements
-
-- Node.js 18+
-- OpenAI API key (for smart detection; `--fast` mode works without it)
-- Git (for `logline pr`)
-- GitHub CLI `gh` (for auto PR creation)
 
 ## FAQ
 
-**Q: I get "command not found" after `npm install -g logline`.**
-
-The unscoped `logline` package is different. Use `logline-cli`.
-
 **Q: Does it work without OpenAI?**
-
-Yes — `logline scan --fast` uses regex-only detection. Free and instant, but won't group interactions into business events.
+Yes — `logline scan --fast` uses regex-only detection. No API key, no cost, instant results.
 
 **Q: Will it break my code?**
+`logline apply` shows a diff preview before every edit and requires explicit `[a]ccept`. Nothing is changed without your confirmation.
 
-Use `logline pr --dry-run` to preview. Everything goes through a PR you control.
+**Q: How does it know which events matter?**
+A relevance scoring system (0–1) combines five signals: schema match, file relevance, cross-reference count, entity quality, and interaction type. Events below 0.25 are filtered out.
 
-**Q: How do I use the tracking plan with AI agents?**
-
-See the Agent Integration section above. The `context.joinPaths` and `context.expectedSequences` fields are designed specifically for agent context windows.
+**Q: I get "command not found" after installing `logline`.**
+The unscoped `logline` package is different. Use `logline-cli`: `npm install -g logline-cli`.
 
 ## License
 

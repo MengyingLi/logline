@@ -18,6 +18,101 @@ import { exportCommand } from './commands/export';
 import { doctorCommand } from './commands/doctor';
 import { applyCommand } from './commands/apply';
 
+// ─── Shell completion scripts ─────────────────────────────────────────────────
+// Defined here (before command registrations) to avoid temporal dead zone.
+
+const _CMDS = 'init scan spec apply approve reject status pr doctor export metrics context completion';
+const _SCAN_FLAGS = '--fast --deep --json --verbose --granular';
+const _EXPORT_FMTS = 'segment amplitude opentelemetry glassflow';
+
+const ZSH_COMPLETION = `\
+#compdef logline
+
+_logline() {
+  local -a commands
+  commands=(
+    'init:Initialize .logline/ in your project'
+    'scan:Detect missing analytics events'
+    'spec:Generate or update the tracking plan'
+    'apply:Interactively instrument suggested events'
+    'approve:Review and approve suggested events'
+    'reject:Mark events as deprecated'
+    'status:Show tracking plan summary'
+    'pr:Create a PR with analytics instrumentation'
+    'doctor:Check environment and configuration'
+    'export:Export tracking plan to external tools'
+    'metrics:Generate metric definitions'
+    'context:Show product ontology'
+    'completion:Print shell completion script'
+  )
+
+  case $CURRENT in
+    2) _describe 'command' commands ;;
+    *)
+      case $words[2] in
+        scan)       _arguments '${_SCAN_FLAGS.split(' ').join("' '")}' ;;
+        approve)    _arguments '--all' '--interactive' ;;
+        reject)     _arguments '--all' ;;
+        export)     _arguments '--format[Format]:format:(${_EXPORT_FMTS})' '--output[Output file]:file:_files' ;;
+        pr)         _arguments '--dry-run' '--base[Base branch]:branch:' '--title[PR title]:title:' ;;
+        completion) _arguments '--shell[Shell type]:shell:(zsh bash fish)' ;;
+      esac
+  esac
+}
+
+_logline "$@"`;
+
+const BASH_COMPLETION = `\
+_logline_completion() {
+  local cur="\${COMP_WORDS[COMP_CWORD]}"
+  local cmd="\${COMP_WORDS[1]}"
+
+  if [ "\${COMP_CWORD}" -eq 1 ]; then
+    COMPREPLY=(\$(compgen -W "${_CMDS}" -- "\$cur"))
+  else
+    case "\$cmd" in
+      scan)       COMPREPLY=(\$(compgen -W "${_SCAN_FLAGS}" -- "\$cur")) ;;
+      approve)    COMPREPLY=(\$(compgen -W "--all --interactive" -- "\$cur")) ;;
+      export)     COMPREPLY=(\$(compgen -W "--format --output ${_EXPORT_FMTS}" -- "\$cur")) ;;
+      pr)         COMPREPLY=(\$(compgen -W "--dry-run --base --title" -- "\$cur")) ;;
+      completion) COMPREPLY=(\$(compgen -W "--shell zsh bash fish" -- "\$cur")) ;;
+    esac
+  fi
+}
+
+complete -F _logline_completion logline`;
+
+const FISH_COMPLETION = `\
+function __fish_logline_no_subcommand
+  not string match -qr '\\b(${_CMDS.split(' ').join('|')})\\b' -- (commandline -poc)
+end
+
+complete -c logline -f
+complete -c logline -n '__fish_logline_no_subcommand' -a 'init'       -d 'Initialize .logline/'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'scan'       -d 'Detect missing events'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'spec'       -d 'Generate tracking plan'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'apply'      -d 'Instrument suggested events'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'approve'    -d 'Approve suggested events'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'reject'     -d 'Deprecate events'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'status'     -d 'Show tracking plan summary'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'pr'         -d 'Create instrumentation PR'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'doctor'     -d 'Check environment'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'export'     -d 'Export to external tools'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'metrics'    -d 'Generate metric definitions'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'context'    -d 'Show product ontology'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'completion' -d 'Print completion script'
+complete -c logline -n '__fish_seen_subcommand_from scan'     -l fast      -d 'Skip LLM'
+complete -c logline -n '__fish_seen_subcommand_from scan'     -l deep      -d 'Deeper analysis'
+complete -c logline -n '__fish_seen_subcommand_from scan'     -l json      -d 'JSON output'
+complete -c logline -n '__fish_seen_subcommand_from scan'     -l verbose   -d 'Verbose output'
+complete -c logline -n '__fish_seen_subcommand_from scan'     -l granular  -d 'All interactions'
+complete -c logline -n '__fish_seen_subcommand_from approve'  -l all       -d 'Approve all'
+complete -c logline -n '__fish_seen_subcommand_from approve'  -s i -l interactive -d 'Interactive'
+complete -c logline -n '__fish_seen_subcommand_from export'   -l format    -d 'Output format' -r -a '${_EXPORT_FMTS}'
+complete -c logline -n '__fish_seen_subcommand_from pr'       -l dry-run   -d 'Preview only'`;
+
+// ─── Program ──────────────────────────────────────────────────────────────────
+
 const program = new Command();
 
 program
@@ -90,14 +185,16 @@ program
 
 program
   .command('approve [eventName]')
-  .description('Mark a suggested/approved event as approved')
+  .description('Review and approve suggested events (interactive by default)')
   .option('--cwd <cwd>', 'Working directory')
-  .option('--all', 'Approve all suggested events')
+  .option('--all', 'Approve all suggested events non-interactively')
+  .option('-i, --interactive', 'Force interactive mode')
   .action(async (eventName: string | undefined, opts: any) => {
     await approveCommand({
       cwd: opts.cwd ? String(opts.cwd) : undefined,
       eventName: eventName ? String(eventName) : undefined,
       all: Boolean(opts.all),
+      interactive: Boolean(opts.interactive),
     });
   });
 
@@ -172,6 +269,27 @@ program
   .option('--cwd <cwd>', 'Working directory')
   .action(async (opts) => {
     await doctorCommand({ cwd: opts.cwd ? String(opts.cwd) : undefined });
+  });
+
+program
+  .command('completion')
+  .description('Print shell completion script')
+  .option('--shell <shell>', 'Shell type: zsh | bash | fish', 'zsh')
+  .action((opts) => {
+    const shell = String(opts.shell).toLowerCase();
+    if (shell === 'zsh') {
+      process.stdout.write(ZSH_COMPLETION + '\n');
+      process.stderr.write(chalk.dim('\n# Add to ~/.zshrc:\n#   eval "$(logline completion --shell zsh)"\n# Or for faster startup:\n#   logline completion --shell zsh > ~/.zfunc/_logline\n#   fpath=(~/.zfunc $fpath) && autoload -Uz compinit && compinit\n'));
+    } else if (shell === 'bash') {
+      process.stdout.write(BASH_COMPLETION + '\n');
+      process.stderr.write(chalk.dim('\n# Add to ~/.bashrc or ~/.bash_profile:\n#   eval "$(logline completion --shell bash)"\n'));
+    } else if (shell === 'fish') {
+      process.stdout.write(FISH_COMPLETION + '\n');
+      process.stderr.write(chalk.dim('\n# Save to fish completions:\n#   logline completion --shell fish > ~/.config/fish/completions/logline.fish\n'));
+    } else {
+      console.error(chalk.red(`Unknown shell: ${shell}. Use --shell zsh|bash|fish`));
+      process.exit(1);
+    }
   });
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
