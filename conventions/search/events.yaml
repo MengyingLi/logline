@@ -1,0 +1,131 @@
+domain: search
+description: >
+  Conventions for search, discovery, and filter events.
+  Covers query submission, result interaction, filtering, and zero-result states.
+  These events reveal how users find value in your product and where they fail.
+status: stable
+version: "1.0"
+
+events:
+
+  - name: search_performed
+    lifecycle: attempt
+    description: >
+      User submits a search query. Fire when the query is sent to the backend
+      or search engine, not when the user starts typing.
+    attributes:
+      required:
+        - name: query_length
+          type: number
+          description: >
+            Character count of the search query. Use length instead of the raw
+            query to avoid capturing PII or sensitive data.
+        - name: result_count
+          type: number
+          description: Number of results returned for this query.
+      optional:
+        - name: search_type
+          type: enum
+          values: [global, scoped, semantic, full_text, fuzzy]
+          description: The search mode used.
+        - name: search_source
+          type: enum
+          values: [navbar, page, command_palette, api, filter_bar]
+          description: Where in the UI the search was initiated.
+        - name: has_filters
+          type: boolean
+          description: True if the search was submitted with active filters.
+
+  - name: search_result_clicked
+    lifecycle: complete
+    description: >
+      User clicks on a search result. Fire when the user selects a specific
+      result to navigate to or preview.
+    attributes:
+      required:
+        - name: result_position
+          type: number
+          description: >
+            1-indexed rank of the result that was clicked. Used to measure
+            mean reciprocal rank and click-through rate by position.
+        - name: result_count
+          type: number
+          description: Total number of results that were shown.
+      optional:
+        - name: query_length
+          type: number
+          description: Character count of the query that produced this result.
+        - name: result_type
+          type: string
+          description: >
+            Category or type of the result (e.g. document, user, project).
+            Use your product's entity names.
+        - name: search_type
+          type: enum
+          values: [global, scoped, semantic, full_text, fuzzy]
+          description: The search mode that returned this result.
+
+  - name: search_filter_applied
+    lifecycle: attempt
+    description: >
+      User applies a filter to narrow search results. Fire when the filter
+      is confirmed and results are refreshed.
+    attributes:
+      required:
+        - name: filter_name
+          type: string
+          description: >
+            Name of the filter dimension (e.g. status, date_range, owner,
+            category). Use your product's actual filter names.
+        - name: result_count
+          type: number
+          description: Number of results after this filter was applied.
+      optional:
+        - name: filter_value_type
+          type: enum
+          values: [single_select, multi_select, date_range, boolean, numeric_range, text]
+          description: Type of value the filter accepts.
+        - name: active_filter_count
+          type: number
+          description: Total number of active filters after this one is applied.
+
+  - name: search_filter_cleared
+    lifecycle: attempt
+    description: >
+      User removes one or all filters. Fire when a filter is deselected and
+      results refresh with fewer constraints.
+    attributes:
+      required:
+        - name: cleared_filter_count
+          type: number
+          description: Number of filters removed (1 for single clear, N for "clear all").
+        - name: result_count
+          type: number
+          description: Number of results after filters were cleared.
+      optional:
+        - name: filter_name
+          type: string
+          description: Name of the specific filter removed (empty if "clear all").
+
+  - name: search_no_results
+    lifecycle: fail
+    description: >
+      Search returns zero results. Fire when a query (with or without filters)
+      produces an empty result set. This is a key signal for content gaps and
+      search quality issues.
+    attributes:
+      required:
+        - name: query_length
+          type: number
+          description: Character count of the query that found nothing.
+      optional:
+        - name: had_filters
+          type: boolean
+          description: True if filters were active — zero results may be filter-induced.
+        - name: active_filter_count
+          type: number
+          description: Number of active filters when zero results occurred.
+        - name: search_type
+          type: enum
+          values: [global, scoped, semantic, full_text, fuzzy]
+          description: The search mode that returned no results.

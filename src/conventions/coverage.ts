@@ -46,6 +46,38 @@ function getMissingRequiredAttributes(
   return missing;
 }
 
+function missingReason(domain: string, eventName: string): string {
+  // Onboarding
+  if (eventName.includes('signup')) return 'No signup flow handler found';
+  if (eventName.includes('email_verification')) return 'No verification email trigger found';
+  if (eventName.includes('onboarding_step')) return 'Onboarding flow detected but steps not instrumented';
+  if (eventName === 'onboarding_complete') return 'Onboarding complete handler not instrumented';
+
+  // Billing
+  if (eventName === 'subscription_trial_start') return 'Trial start not instrumented — required for conversion funnel';
+  if (eventName === 'subscription_trial_convert') return 'Trial conversion not instrumented — key revenue event';
+  if (eventName === 'subscription_trial_expire') return 'Trial expiry not instrumented — required for churn analysis';
+  if (eventName === 'subscription_cancelled') return 'Cancellation flow not instrumented — required for churn analysis';
+  if (eventName === 'subscription_upgraded') return 'Upgrade path not instrumented';
+  if (eventName === 'subscription_downgraded') return 'Downgrade path not instrumented';
+  if (eventName === 'payment_fail') return 'Payment failure handler not instrumented — required for revenue recovery';
+  if (domain === 'billing') return 'Billing event not instrumented';
+
+  // Search
+  if (eventName === 'search_performed') return 'Search handler not instrumented';
+  if (eventName === 'search_no_results') return 'Zero-results state not instrumented — key quality signal';
+  if (eventName === 'search_result_clicked') return 'Result click not instrumented — needed for relevance analysis';
+  if (domain === 'search') return 'Search event not instrumented';
+
+  // Collaboration
+  if (eventName === 'member_invited') return 'Invitation flow not instrumented — required for PLG seat expansion';
+  if (eventName === 'member_invite_accepted') return 'Invite acceptance not instrumented';
+  if (eventName === 'workspace_created') return 'Workspace creation not instrumented';
+  if (domain === 'collaboration') return 'Collaboration event not instrumented';
+
+  return 'Not found in codebase';
+}
+
 function formatRequiredHint(attrs: ConventionEvent['attributes']['required']): string {
   return attrs.map((a) => (a.type === 'enum' && a.values ? `${a.name} (enum: ${a.values.join(', ')})` : a.name)).join(', ');
 }
@@ -95,11 +127,7 @@ export async function computeConventionCoverage(
         const required = (convEvent.attributes.required ?? []).map((a) =>
           a.type === 'enum' && a.values ? `${a.name} (enum)` : a.name
         );
-        let reason = 'Not found in codebase';
-        if (convEvent.name.includes('signup')) reason = 'No signup flow handler found';
-        else if (convEvent.name.includes('email_verification')) reason = 'No verification email trigger found';
-        else if (convEvent.name.includes('onboarding_step')) reason = 'Onboarding flow detected but steps not instrumented';
-        else if (convEvent.name === 'onboarding_complete') reason = 'Required: flow_id, steps_completed, steps_skipped';
+        const reason = missingReason(domain, convEvent.name);
 
         missing.push({
           eventName: convEvent.name,

@@ -1,0 +1,170 @@
+domain: collaboration
+description: >
+  Conventions for team, workspace, and permission events in multi-user products.
+  Covers member invitations, role changes, and workspace lifecycle.
+  These events are essential for product-led growth and seat expansion analysis.
+status: stable
+version: "1.0"
+
+events:
+
+  - name: member_invited
+    lifecycle: attempt
+    description: >
+      An invitation is sent to a new team or workspace member. Fire when the
+      invitation email is dispatched or the invite link is generated.
+    attributes:
+      required:
+        - name: invite_role
+          type: string
+          description: >
+            Role being granted to the invitee (e.g. admin, member, viewer,
+            editor). Use your product's actual role names.
+        - name: invite_method
+          type: enum
+          values: [email, link, bulk_csv, sso_directory, api]
+          description: How the invitation was sent.
+      optional:
+        - name: invitee_domain
+          type: string
+          description: >
+            Email domain of the invitee (not full address). Used to detect
+            same-domain vs cross-domain invites.
+        - name: is_same_domain
+          type: boolean
+          description: True if the invitee shares the inviter's email domain.
+        - name: seats_remaining
+          type: number
+          description: Available seats after this invitation, if seat-limited.
+
+  - name: member_invite_accepted
+    lifecycle: success
+    description: >
+      Invitee accepts the invitation and joins the team or workspace. Fire when
+      the invitee completes the acceptance flow and their account is linked.
+    attributes:
+      required:
+        - name: invite_role
+          type: string
+          description: Role granted to the new member.
+        - name: invite_method
+          type: enum
+          values: [email, link, bulk_csv, sso_directory, api]
+          description: How the invitation was originally sent.
+      optional:
+        - name: time_to_accept_hours
+          type: number
+          description: Hours between member_invited and member_invite_accepted.
+        - name: is_new_account
+          type: boolean
+          description: True if the invitee created a new account to accept.
+
+  - name: member_invite_declined
+    lifecycle: fail
+    description: >
+      Invitee declines the invitation, or the invitation expires before being
+      accepted. Fire on explicit decline or on expiry cleanup.
+    attributes:
+      required:
+        - name: invite_method
+          type: enum
+          values: [email, link, bulk_csv, sso_directory, api]
+          description: How the invitation was sent.
+        - name: decline_reason
+          type: enum
+          values: [declined_by_user, expired, revoked_by_admin, seats_full, unknown]
+          description: Why the invitation did not result in a new member.
+      optional:
+        - name: time_to_decline_hours
+          type: number
+          description: Hours between member_invited and member_invite_declined.
+
+  - name: member_removed
+    lifecycle: complete
+    description: >
+      A member is removed from the team or workspace. Fire when the removal is
+      confirmed and the member loses access.
+    attributes:
+      required:
+        - name: removed_role
+          type: string
+          description: Role the removed member held.
+        - name: removal_reason
+          type: enum
+          values: [admin_action, self_removal, account_deleted, seat_reduction, inactivity, unknown]
+          description: Why the member was removed.
+      optional:
+        - name: months_as_member
+          type: number
+          description: How long the member had been active before removal.
+        - name: was_last_admin
+          type: boolean
+          description: True if removing this member left no admins — may trigger a warning.
+
+  - name: role_changed
+    lifecycle: complete
+    description: >
+      A member's role or permission level is changed. Fire when the role update
+      is saved and the member's new permissions take effect.
+    attributes:
+      required:
+        - name: from_role
+          type: string
+          description: The member's previous role.
+        - name: to_role
+          type: string
+          description: The member's new role.
+      optional:
+        - name: is_promotion
+          type: boolean
+          description: True if the new role has more permissions than the previous role.
+        - name: changed_by
+          type: enum
+          values: [admin, owner, self, api, sso_sync]
+          description: Who or what triggered the role change.
+
+  - name: workspace_created
+    lifecycle: success
+    description: >
+      A new workspace, organization, or team is created. Fire when the entity
+      is persisted and the creator becomes its first admin.
+    attributes:
+      required:
+        - name: workspace_type
+          type: string
+          description: >
+            Type of workspace created (e.g. personal, team, organization,
+            enterprise). Use your product's terminology.
+      optional:
+        - name: plan_id
+          type: string
+          description: Plan the workspace starts on (often a trial or free plan).
+        - name: created_via
+          type: enum
+          values: [signup, in_app, api, sso_provisioning]
+          description: How the workspace was created.
+        - name: member_count_initial
+          type: number
+          description: Number of members when the workspace was created (usually 1).
+
+  - name: workspace_deleted
+    lifecycle: complete
+    description: >
+      A workspace, organization, or team is permanently deleted. Fire when
+      deletion is confirmed and data removal begins.
+    attributes:
+      required:
+        - name: workspace_type
+          type: string
+          description: Type of workspace that was deleted.
+        - name: deletion_reason
+          type: enum
+          values: [owner_decision, inactivity, payment_failure, policy_violation, unknown]
+          description: Why the workspace was deleted.
+      optional:
+        - name: months_active
+          type: number
+          description: How long the workspace was active before deletion.
+        - name: member_count_at_deletion
+          type: number
+          description: Number of members when the workspace was deleted.

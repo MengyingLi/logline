@@ -1,0 +1,243 @@
+domain: billing
+description: >
+  Conventions for subscription lifecycle, payment, and trial events.
+  Covers trial start/convert/expire, plan changes, cancellation, and payment outcomes.
+  These events are the foundation of revenue analytics and churn analysis.
+status: stable
+version: "1.0"
+
+# Lifecycle pattern reference:
+#   attempt  → user initiated the action
+#   success  → action completed successfully
+#   fail     → action failed (always include error_type)
+#   start    → a multi-step or async process began
+#   complete → a multi-step or async process finished
+#   skip     → user intentionally bypassed a step
+
+events:
+
+  - name: subscription_trial_start
+    lifecycle: start
+    description: >
+      Trial period begins. Fire when a new trial subscription is created,
+      either at signup or when an existing user activates a trial.
+    attributes:
+      required:
+        - name: plan_id
+          type: string
+          description: Identifier of the plan the user is trialing.
+        - name: trial_days
+          type: number
+          description: Length of the trial period in days.
+      optional:
+        - name: trial_end_date
+          type: string
+          description: ISO 8601 date when the trial expires.
+        - name: payment_method_collected
+          type: boolean
+          description: True if a credit card was collected upfront.
+
+  - name: subscription_trial_convert
+    lifecycle: complete
+    description: >
+      Trial converts to a paid subscription. Fire when the first real charge
+      succeeds after a trial period ends.
+    attributes:
+      required:
+        - name: plan_id
+          type: string
+          description: Plan the user converted to.
+        - name: interval
+          type: enum
+          values: [monthly, annual, quarterly, one_time]
+          description: Billing interval of the new subscription.
+      optional:
+        - name: trial_days
+          type: number
+          description: Length of the trial period that just ended.
+        - name: mrr_cents
+          type: number
+          description: Monthly recurring revenue contribution in cents.
+
+  - name: subscription_trial_expire
+    lifecycle: fail
+    description: >
+      Trial expires without converting to paid. Fire when a trial period ends
+      and no payment method is charged.
+    attributes:
+      required:
+        - name: plan_id
+          type: string
+          description: Plan the user was trialing.
+        - name: trial_days
+          type: number
+          description: Length of the trial that expired.
+      optional:
+        - name: last_active_days_ago
+          type: number
+          description: Days since the user last logged in during the trial.
+
+  - name: subscription_created
+    lifecycle: success
+    description: >
+      A new paid subscription is created (not from a trial). Fire when the
+      backend confirms the subscription is active and first payment succeeded.
+    attributes:
+      required:
+        - name: plan_id
+          type: string
+          description: Identifier of the plan subscribed to.
+        - name: interval
+          type: enum
+          values: [monthly, annual, quarterly, one_time]
+          description: Billing interval.
+      optional:
+        - name: mrr_cents
+          type: number
+          description: Monthly recurring revenue contribution in cents.
+        - name: coupon_code
+          type: string
+          description: Discount code applied at checkout, if any.
+
+  - name: subscription_upgraded
+    lifecycle: complete
+    description: >
+      User moves to a higher-tier plan. Fire when the plan change is confirmed
+      and any prorated charge has been applied.
+    attributes:
+      required:
+        - name: from_plan_id
+          type: string
+          description: Plan the user is upgrading from.
+        - name: to_plan_id
+          type: string
+          description: Plan the user is upgrading to.
+      optional:
+        - name: mrr_delta_cents
+          type: number
+          description: Change in monthly recurring revenue in cents (positive for upgrade).
+        - name: interval
+          type: enum
+          values: [monthly, annual, quarterly]
+          description: Billing interval after the upgrade.
+
+  - name: subscription_downgraded
+    lifecycle: complete
+    description: >
+      User moves to a lower-tier plan. Fire when the plan change is confirmed.
+    attributes:
+      required:
+        - name: from_plan_id
+          type: string
+          description: Plan the user is downgrading from.
+        - name: to_plan_id
+          type: string
+          description: Plan the user is downgrading to.
+      optional:
+        - name: mrr_delta_cents
+          type: number
+          description: Change in monthly recurring revenue in cents (negative for downgrade).
+        - name: downgrade_reason
+          type: enum
+          values: [too_expensive, missing_features, not_using, switching_product, other]
+          description: Self-reported reason for downgrade, if collected.
+
+  - name: subscription_cancelled
+    lifecycle: complete
+    description: >
+      User cancels their subscription. Fire when cancellation is confirmed by
+      the billing provider — at the end of the billing period or immediately.
+    attributes:
+      required:
+        - name: plan_id
+          type: string
+          description: Plan that was cancelled.
+        - name: cancellation_timing
+          type: enum
+          values: [immediate, end_of_period]
+          description: Whether the cancellation takes effect immediately or at period end.
+      optional:
+        - name: cancel_reason
+          type: enum
+          values: [too_expensive, missing_features, not_using, switching_product, technical_issues, other]
+          description: Self-reported cancellation reason, if collected.
+        - name: months_subscribed
+          type: number
+          description: Number of months the user was subscribed before cancelling.
+
+  - name: subscription_reactivated
+    lifecycle: success
+    description: >
+      A cancelled subscription is reactivated. Fire when a previously cancelled
+      subscription becomes active again.
+    attributes:
+      required:
+        - name: plan_id
+          type: string
+          description: Plan the user reactivated.
+      optional:
+        - name: months_since_cancellation
+          type: number
+          description: Months elapsed since the subscription was cancelled.
+
+  - name: payment_attempt
+    lifecycle: attempt
+    description: >
+      A payment is initiated. Fire when a charge is sent to the payment
+      processor, before the outcome is known.
+    attributes:
+      required:
+        - name: amount_cents
+          type: number
+          description: Amount being charged in cents.
+        - name: currency
+          type: string
+          description: ISO 4217 currency code (e.g. USD, EUR).
+      optional:
+        - name: payment_method_type
+          type: enum
+          values: [card, bank_transfer, paypal, invoice, other]
+          description: Type of payment method used.
+
+  - name: payment_success
+    lifecycle: success
+    description: >
+      Payment confirmed by the processor. Fire when the charge succeeds.
+    attributes:
+      required:
+        - name: amount_cents
+          type: number
+          description: Amount charged in cents.
+        - name: currency
+          type: string
+          description: ISO 4217 currency code.
+      optional:
+        - name: payment_method_type
+          type: enum
+          values: [card, bank_transfer, paypal, invoice, other]
+          description: Type of payment method that succeeded.
+
+  - name: payment_fail
+    lifecycle: fail
+    description: >
+      Payment rejected by the processor. Fire immediately on failure.
+      This is critical for revenue recovery workflows.
+    attributes:
+      required:
+        - name: amount_cents
+          type: number
+          description: Amount that failed to charge in cents.
+        - name: currency
+          type: string
+          description: ISO 4217 currency code.
+        - name: error_type
+          type: enum
+          values: [card_declined, insufficient_funds, expired_card, invalid_cvc, fraud_detected, processor_error, unknown]
+          description: Category of payment failure.
+      optional:
+        - name: retry_count
+          type: number
+          description: Number of times this charge has been retried.
+        - name: is_dunning
+          type: boolean
+          description: True if this failure is part of an automated dunning sequence.
