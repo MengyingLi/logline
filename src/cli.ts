@@ -3,6 +3,8 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import pkg from '../package.json';
+import { checkForUpdates } from './lib/utils/update-check';
+import { coverageBar, priorityLabel, trunc } from './lib/utils/format';
 import { initCommand } from './commands/init';
 import { scanCommand } from './commands/scan';
 import { specCommand } from './commands/spec';
@@ -172,125 +174,109 @@ program
     await doctorCommand({ cwd: opts.cwd ? String(opts.cwd) : undefined });
   });
 
-program.parseAsync();
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+  // Start update check early (non-blocking, returns from cache instantly)
+  const updatePromise = checkForUpdates(pkg.version);
+
+  await program.parseAsync();
+
+  // Print update notice after the command (max 300 ms wait, stderr so --json is clean)
+  try {
+    const latest = await Promise.race([
+      updatePromise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 300)),
+    ]);
+    if (latest) {
+      process.stderr.write(
+        chalk.dim(`\n  ℹ  logline-cli ${chalk.bold(latest)} is available (you have ${pkg.version})\n`) +
+        chalk.dim(`     npm i -g logline-cli\n`)
+      );
+    }
+  } catch {}
+}
+
+main();
+
+// ─── Scan output ──────────────────────────────────────────────────────────────
 
 function printScanResult(result: Awaited<ReturnType<typeof scanCommand>>): void {
-  // Always display actual scan result: result.gaps (suggested) and result.events (already tracked).
-  // Never use fallbacks or default event lists.
-  const gaps: Array<{ suggestedEvent: string; priority: string; location?: { file?: string; line?: number }; description?: string; includes?: string[]; hint?: string }> = Array.isArray(result.gaps) ? result.gaps : [];
-  const events: Array<{ name: string; locations?: Array<{ file?: string; line?: number }> }> = Array.isArray(result.events) ? result.events : [];
+  const gaps = Array.isArray(result.gaps) ? result.gaps : [];
+  const events = Array.isArray(result.events) ? result.events : [];
   const coverage = result.coverage ?? { tracked: events.length, missing: gaps.length, percentage: 0 };
 
-  // Product profile
-  console.log(chalk.bold('📊 Product Profile'));
-  console.log(`   Mission: ${result.profile?.mission ?? 'Not analyzed'}`);
-  if (result.profile?.keyMetrics?.length) {
-    console.log(`   Key Metrics: ${result.profile.keyMetrics.join(', ')}`);
-  }
-  console.log(`   Confidence: ${Math.round((result.profile?.confidence ?? 0) * 100)}%`);
-  console.log();
+  const PRIORITY_ORDER = ['critical', 'high', 'medium', 'low'];
 
-  // Coverage (from actual gaps and events)
-  console.log(
-    chalk.bold(
-      `🎯 Event Coverage: ${coverage.percentage}% (${coverage.tracked} tracked / ${coverage.missing} suggested)`
-    )
-  );
-  console.log();
+  // ── Gaps table ─────────────────────────────────────────────────────────────
+  if (gaps.length > 0) {
+    const sorted = [...gaps].sort(
+      (a, b) => PRIORITY_ORDER.indexOf(a.priority ?? 'low') - PRIORITY_ORDER.indexOf(b.priority ?? 'low')
+    );
+    const shown = sorted.slice(0, 20);
+    const rest = sorted.length - shown.length;
 
-  // Display suggested gaps grouped by signal type
-  const signalGroups: Array<{ title: string; key: string; dest: string }> = [
-    { title: '📊 Analytics (→ Segment/PostHog):', key: 'action', dest: 'track()' },
-    { title: '🔄 State Transitions (→ analytics + logging):', key: 'state_change', dest: 'track() + logger.info()' },
-    { title: '🔧 Operations (→ logging):', key: 'operation', dest: 'logger.info()' },
-    { title: '🔴 Errors (→ logging + alerts):', key: 'error', dest: 'logger.error()' },
-  ];
+    console.log(chalk.bold(`Gaps — ${gaps.length} event${gaps.length === 1 ? '' : 's'} to instrument`));
+    console.log();
 
-  const hasSignalTypes = gaps.some((g: any) => g.signalType);
-  if (hasSignalTypes) {
-    for (const sg of signalGroups) {
-      const items = gaps.filter((x: any) => (x.signalType ?? 'action') === sg.key);
-      if (items.length === 0) continue;
-      console.log(chalk.bold(sg.title));
-      for (const gap of (items as typeof gaps).slice(0, 12)) {
-        const loc =
-          gap.location?.file != null && gap.location?.line != null
-            ? `${gap.location.file}:${gap.location.line}`
-            : gap.location?.file ?? 'unknown';
-        console.log(
-          `  ${chalk.yellow('✗')} ${chalk.bold((gap.suggestedEvent ?? '').padEnd(22))} ${chalk.dim(loc)}`
-        );
-        if (gap.description) console.log(chalk.dim(`                           ${gap.description}`));
-        if (gap.includes?.length) {
-          console.log(chalk.dim(`                           Includes: ${gap.includes.join(', ')}`));
-        }
+    for (const gap of shown) {
+      const name = trunc(gap.suggestedEvent ?? '', 32);
+      const file = gap.location?.file
+        ? `${gap.location.file}${gap.location.line ? `:${gap.location.line}` : ''}`
+        : '';
+      const loc = chalk.dim(trunc(file, 38));
+      const pri = priorityLabel(gap.priority);
+      console.log(`  ${chalk.yellow('✗')} ${name}  ${loc}  ${pri}`);
+      if (gap.includes?.length) {
+        console.log(chalk.dim(`       Includes: ${gap.includes.join(', ')}`));
       }
-      if (items.length > 12) console.log(chalk.dim(`  ... and ${items.length - 12} more`));
-      console.log();
     }
+
+    if (rest > 0) console.log(chalk.dim(`  … and ${rest} more`));
+    console.log();
   } else {
-    // Fallback: group by priority
-    const groups: Array<{ title: string; key: string }> = [
-      { title: 'Critical Events (track these first):', key: 'critical' },
-      { title: 'High Priority:', key: 'high' },
-      { title: 'Medium Priority:', key: 'medium' },
-      { title: 'Low Priority:', key: 'low' },
-    ];
-    for (const g of groups) {
-      const items = gaps.filter((x) => x.priority === g.key);
-      if (items.length === 0) continue;
-      console.log(chalk.bold(g.title));
-      for (const gap of items.slice(0, 12)) {
-        const loc =
-          gap.location?.file != null && gap.location?.line != null
-            ? `${gap.location.file}:${gap.location.line}`
-            : gap.location?.file ?? 'unknown';
-        const hint = gap.hint ?? '';
-        console.log(
-          `  ${chalk.yellow('✗')} ${chalk.bold((gap.suggestedEvent ?? '').padEnd(22))} ${loc} ${chalk.dim(hint)}`
-        );
-        if (gap.description) console.log(chalk.dim(`                           ${gap.description}`));
-        if (gap.includes?.length) {
-          console.log(chalk.dim(`                           Includes: ${gap.includes.join(', ')}`));
-        }
-      }
-      if (items.length > 12) console.log(chalk.dim(`  ... and ${items.length - 12} more`));
-      console.log();
-    }
-  }
-
-  // Already tracked (from scan result only)
-  if (events.length > 0) {
-    console.log(chalk.bold('Already Tracked:'));
-    for (const ev of events.slice(0, 12)) {
-      const first = ev.locations?.[0];
-      const loc = first ? `${first.file ?? ''}:${first.line ?? ''}` : '';
-      console.log(`  ${chalk.green('✓')} ${chalk.bold((ev.name ?? '').padEnd(22))} ${loc}`);
-    }
-    if (events.length > 12) console.log(chalk.dim(`  ... and ${events.length - 12} more`));
+    console.log(`${chalk.green('✓')} No gaps — your tracking looks complete!`);
     console.log();
   }
 
-  // Convention coverage (when conventions apply)
+  // ── Already tracked (inline, compact) ─────────────────────────────────────
+  if (events.length > 0) {
+    const names = events
+      .slice(0, 6)
+      .map((e) => chalk.dim(e.name))
+      .join(chalk.dim(' · '));
+    const extra = events.length > 6 ? chalk.dim(` and ${events.length - 6} more`) : '';
+    console.log(`${chalk.green('✓')} Tracking: ${names}${extra}`);
+    console.log();
+  }
+
+  // ── Coverage bar ───────────────────────────────────────────────────────────
+  const pct = coverage.percentage;
+  const bar = coverageBar(pct);
+  console.log(`Coverage  ${bar}  ${chalk.bold(`${pct}%`)}  ${chalk.dim(`${coverage.tracked} tracked · ${coverage.missing} gaps`)}`);
+
+  if (gaps.length > 0) {
+    console.log();
+    console.log(chalk.dim('Run `logline spec` to save to tracking plan, then `logline apply` to instrument.'));
+  }
+
+  // ── Convention coverage (unchanged, only shown when conventions apply) ─────
   const conventionCoverage = result.conventionCoverage;
   if (conventionCoverage?.length) {
+    console.log();
     for (const cov of conventionCoverage) {
-      console.log(chalk.bold(`🎯 Convention Coverage: ${cov.domain}`));
+      console.log(chalk.bold(`Convention Coverage — ${cov.domain}`));
       console.log();
       if (cov.matched.length) {
-        console.log(chalk.bold('Matched:'));
         for (const m of cov.matched) {
-          console.log(`  ${chalk.green('✓')} ${chalk.bold(m.eventName.padEnd(24))} ${m.location}`);
+          console.log(`  ${chalk.green('✓')} ${chalk.bold(m.eventName.padEnd(24))} ${chalk.dim(m.location)}`);
           if (m.missingRequired.length) {
             console.log(chalk.yellow(`    ⚠ Missing required: ${m.missingRequired.join(', ')}${m.requiredHint ? ` (${m.requiredHint})` : ''}`));
-          } else {
-            console.log(chalk.dim('    ✓ All required attributes present'));
           }
         }
         console.log();
       }
       if (cov.missing.length) {
-        console.log(chalk.bold('Missing:'));
         for (const m of cov.missing) {
           console.log(`  ${chalk.yellow('✗')} ${chalk.bold(m.eventName.padEnd(24))} ${chalk.dim(m.reason)}`);
           if (m.required.length) console.log(chalk.dim(`    Required: ${m.required.join(', ')}`));
@@ -299,7 +285,5 @@ function printScanResult(result: Awaited<ReturnType<typeof scanCommand>>): void 
       }
     }
   }
-
-  console.log(chalk.dim('Run `logline spec` to update your tracking plan.'));
 }
 
