@@ -17,11 +17,13 @@ import { contextCommand } from './commands/context';
 import { exportCommand } from './commands/export';
 import { doctorCommand } from './commands/doctor';
 import { applyCommand } from './commands/apply';
+import { lintCommand } from './commands/lint';
+import { execSync } from 'child_process';
 
 // ─── Shell completion scripts ─────────────────────────────────────────────────
 // Defined here (before command registrations) to avoid temporal dead zone.
 
-const _CMDS = 'init scan spec apply approve reject status pr doctor export metrics context completion';
+const _CMDS = 'init scan spec apply approve reject lint status pr doctor open export metrics context completion';
 const _SCAN_FLAGS = '--fast --deep --json --verbose --granular';
 const _EXPORT_FMTS = 'segment amplitude opentelemetry glassflow';
 
@@ -37,9 +39,11 @@ _logline() {
     'apply:Interactively instrument suggested events'
     'approve:Review and approve suggested events'
     'reject:Mark events as deprecated'
+    'lint:Validate track() calls against the tracking plan'
     'status:Show tracking plan summary'
     'pr:Create a PR with analytics instrumentation'
     'doctor:Check environment and configuration'
+    'open:Open the Logline dashboard in your browser'
     'export:Export tracking plan to external tools'
     'metrics:Generate metric definitions'
     'context:Show product ontology'
@@ -53,6 +57,7 @@ _logline() {
         scan)       _arguments '${_SCAN_FLAGS.split(' ').join("' '")}' ;;
         approve)    _arguments '--all' '--interactive' ;;
         reject)     _arguments '--all' ;;
+        lint)       _arguments '--json' ;;
         export)     _arguments '--format[Format]:format:(${_EXPORT_FMTS})' '--output[Output file]:file:_files' ;;
         pr)         _arguments '--dry-run' '--base[Base branch]:branch:' '--title[PR title]:title:' ;;
         completion) _arguments '--shell[Shell type]:shell:(zsh bash fish)' ;;
@@ -73,6 +78,7 @@ _logline_completion() {
     case "\$cmd" in
       scan)       COMPREPLY=(\$(compgen -W "${_SCAN_FLAGS}" -- "\$cur")) ;;
       approve)    COMPREPLY=(\$(compgen -W "--all --interactive" -- "\$cur")) ;;
+      lint)       COMPREPLY=(\$(compgen -W "--json" -- "\$cur")) ;;
       export)     COMPREPLY=(\$(compgen -W "--format --output ${_EXPORT_FMTS}" -- "\$cur")) ;;
       pr)         COMPREPLY=(\$(compgen -W "--dry-run --base --title" -- "\$cur")) ;;
       completion) COMPREPLY=(\$(compgen -W "--shell zsh bash fish" -- "\$cur")) ;;
@@ -94,9 +100,11 @@ complete -c logline -n '__fish_logline_no_subcommand' -a 'spec'       -d 'Genera
 complete -c logline -n '__fish_logline_no_subcommand' -a 'apply'      -d 'Instrument suggested events'
 complete -c logline -n '__fish_logline_no_subcommand' -a 'approve'    -d 'Approve suggested events'
 complete -c logline -n '__fish_logline_no_subcommand' -a 'reject'     -d 'Deprecate events'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'lint'       -d 'Validate track() calls'
 complete -c logline -n '__fish_logline_no_subcommand' -a 'status'     -d 'Show tracking plan summary'
 complete -c logline -n '__fish_logline_no_subcommand' -a 'pr'         -d 'Create instrumentation PR'
 complete -c logline -n '__fish_logline_no_subcommand' -a 'doctor'     -d 'Check environment'
+complete -c logline -n '__fish_logline_no_subcommand' -a 'open'       -d 'Open Logline dashboard'
 complete -c logline -n '__fish_logline_no_subcommand' -a 'export'     -d 'Export to external tools'
 complete -c logline -n '__fish_logline_no_subcommand' -a 'metrics'    -d 'Generate metric definitions'
 complete -c logline -n '__fish_logline_no_subcommand' -a 'context'    -d 'Show product ontology'
@@ -108,6 +116,7 @@ complete -c logline -n '__fish_seen_subcommand_from scan'     -l verbose   -d 'V
 complete -c logline -n '__fish_seen_subcommand_from scan'     -l granular  -d 'All interactions'
 complete -c logline -n '__fish_seen_subcommand_from approve'  -l all       -d 'Approve all'
 complete -c logline -n '__fish_seen_subcommand_from approve'  -s i -l interactive -d 'Interactive'
+complete -c logline -n '__fish_seen_subcommand_from lint'     -l json      -d 'JSON output'
 complete -c logline -n '__fish_seen_subcommand_from export'   -l format    -d 'Output format' -r -a '${_EXPORT_FMTS}'
 complete -c logline -n '__fish_seen_subcommand_from pr'       -l dry-run   -d 'Preview only'`;
 
@@ -269,6 +278,31 @@ program
   .option('--cwd <cwd>', 'Working directory')
   .action(async (opts) => {
     await doctorCommand({ cwd: opts.cwd ? String(opts.cwd) : undefined });
+  });
+
+program
+  .command('lint')
+  .description('Validate track() calls in source files against the tracking plan')
+  .option('--cwd <cwd>', 'Working directory')
+  .option('--json', 'Machine-readable output')
+  .action(async (opts) => {
+    await lintCommand({ cwd: opts.cwd ? String(opts.cwd) : undefined, json: Boolean(opts.json) });
+  });
+
+program
+  .command('open')
+  .description('Open the Logline dashboard in your browser')
+  .action(() => {
+    const url = 'https://logline.dev/dashboard';
+    const opener =
+      process.platform === 'darwin' ? 'open' :
+      process.platform === 'win32' ? 'start' : 'xdg-open';
+    try {
+      execSync(`${opener} "${url}"`, { stdio: 'ignore' });
+      console.log(chalk.dim(`Opening ${url}`));
+    } catch {
+      console.log(`Open: ${url}`);
+    }
   });
 
 program

@@ -146,7 +146,10 @@ Fan-out to Segment, PostHog, Mixpanel, or Amplitude is configured per-repo in th
 | `logline approve` | Interactive review: approve / skip / reject each suggested event |
 | `logline approve --all` | Approve all suggested events at once |
 | `logline reject [event]` | Mark an event as deprecated |
+| `logline lint` | Validate existing `track()` calls against the tracking plan |
+| `logline lint --json` | Machine-readable lint output (CI-friendly, exits 1 on errors) |
 | `logline status` | Coverage bar, pending events, next action |
+| `logline open` | Open the Logline dashboard in your browser |
 | `logline pr` | Create a PR with analytics instrumentation |
 | `logline pr --dry-run` | Preview changes without creating PR |
 | `logline doctor` | Check Node, API keys, git, source files |
@@ -157,6 +160,31 @@ Fan-out to Segment, PostHog, Mixpanel, or Amplitude is configured per-repo in th
 | `logline metrics` | Generate metric definitions from context |
 | `logline context` | Show product ontology (text, mermaid, json) |
 | `logline completion --shell zsh` | Print shell completion script |
+
+## Lint
+
+`logline lint` validates every `track()` call in your source files against the tracking plan — catching unknown events, missing required properties, and calls to deprecated events before they ship.
+
+```
+$ logline lint
+
+Linting track() calls across the codebase...
+
+src/app/billing.tsx
+  ✗    8  plan_upgraded                      'plan_upgraded' is not in the tracking plan  (did you mean 'subscription_upgraded'?)
+  ✗   23  subscription_created               missing required property 'plan_id'
+
+src/app/auth.tsx
+  ⚠   45  legacy_signup                      'legacy_signup' is deprecated in the tracking plan
+
+3 calls — 2 errors, 1 warning, 0 clean
+```
+
+Use `--json` for CI pipelines — exits with code 1 when errors are found:
+
+```bash
+logline lint --json | jq '.violations[] | select(.severity == "error")'
+```
 
 ## Semantic Conventions
 
