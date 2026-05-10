@@ -26,6 +26,8 @@ const DESTINATIONS: DestinationChoice[] = [
 interface SetupAnswers {
   destination: DestinationChoice;
   apiKey: string;
+  websiteUrl: string;
+  description: string;
 }
 
 // ─── Interactive prompts ──────────────────────────────────────────────────────
@@ -60,7 +62,15 @@ async function runInteractiveSetup(): Promise<SetupAnswers> {
       console.log();
     }
 
-    return { destination: chosen, apiKey };
+    // ── Product context (optional) ───────────────────────────────────────────
+    console.log(chalk.dim('  Help Logline understand your product (improves event quality):'));
+    console.log();
+
+    const websiteUrl = await ask(`  Website URL ${chalk.dim('(e.g. https://yourapp.com, or press Enter to skip)')} → `);
+    const description = await ask(`  One-line description ${chalk.dim('(or press Enter to skip)')} → `);
+    console.log();
+
+    return { destination: chosen, apiKey, websiteUrl, description };
   } finally {
     rl.close();
   }
@@ -132,6 +142,8 @@ export async function initCommand(options: { cwd?: string }): Promise<void> {
   let trackingDest = { destination: 'logline', importPath: '.logline/track', functionName: 'track' };
   let apiKey = '';
 
+  let productContext: { websiteUrl?: string; description?: string } = {};
+
   if (isFirstRun && process.stdin.isTTY) {
     const answers = await runInteractiveSetup();
     trackingDest = {
@@ -140,11 +152,13 @@ export async function initCommand(options: { cwd?: string }): Promise<void> {
       functionName: answers.destination.functionName,
     };
     apiKey = answers.apiKey;
+    if (answers.websiteUrl) productContext.websiteUrl = answers.websiteUrl;
+    if (answers.description) productContext.description = answers.description;
   }
 
   if (isFirstRun) {
     const include = detectSourceDirs(cwd);
-    const config = {
+    const config: Record<string, unknown> = {
       eventGranularity: 'business',
       tracking: trackingDest,
       scan: {
@@ -160,6 +174,9 @@ export async function initCommand(options: { cwd?: string }): Promise<void> {
         ],
       },
     };
+    if (productContext.websiteUrl || productContext.description) {
+      config.product = productContext;
+    }
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
     console.log(`  ${chalk.green('✓')} Created .logline/config.json`);
   } else {

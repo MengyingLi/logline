@@ -17,6 +17,11 @@ export interface LoglineConfig {
     include: string[];
     exclude: string[];
   };
+  /** Optional product context to improve event synthesis quality. */
+  product?: {
+    websiteUrl?: string;
+    description?: string;
+  };
 }
 
 export function getDefaultConfig(): LoglineConfig {
@@ -93,6 +98,12 @@ export function readLoglineConfig(cwd: string): LoglineConfig {
               .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
               .map((x) => x.trim())
           : defaults.scan.exclude,
+      },
+      product: {
+        websiteUrl: typeof cfg.product?.websiteUrl === 'string' && cfg.product.websiteUrl.trim()
+          ? cfg.product.websiteUrl.trim() : undefined,
+        description: typeof cfg.product?.description === 'string' && cfg.product.description.trim()
+          ? cfg.product.description.trim() : undefined,
       },
     };
   } catch (err: any) {

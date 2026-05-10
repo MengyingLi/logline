@@ -19,6 +19,7 @@ import { scoreEvents, type ScoredEvent } from '../lib/pipeline/05b-score-events'
 import { findBestLocation } from '../lib/pipeline/06-find-locations';
 import { hashCodebase, readCache, writeCache } from '../lib/utils/cache';
 import { readLoglineConfig } from '../lib/utils/config';
+import { getLLMApiKey, LLM_KEY_ENV_VARS } from '../lib/utils/llm';
 
 export interface ScanResult {
   profile: ProductProfile;
@@ -92,8 +93,9 @@ export async function scanCommand(options: {
   const inventory = runInventory(files);
 
   // Stage 3: Product understanding (skip if --fast)
-  if (!options.fast && !process.env.OPENAI_API_KEY) {
-    fail('Set OPENAI_API_KEY for smart detection, or use --fast for regex-only mode');
+  const llmKey = getLLMApiKey();
+  if (!options.fast && !llmKey) {
+    fail(`Set ${LLM_KEY_ENV_VARS} for smart detection, or use --fast for regex-only mode`);
   }
 
   const profileSpinner = spinnersEnabled && !options.fast ? ora('Analyzing product profile...').start() : null;
@@ -107,10 +109,12 @@ export async function scanCommand(options: {
         confidence: 0,
       }
     : await analyzeProduct({
-        apiKey: process.env.OPENAI_API_KEY,
+        apiKey: llmKey?.key,
         files,
         existingEventNames: inventory.existingEvents.map((e) => e.name),
         entities: inventory.detectedEntities,
+        websiteUrl: config.product?.websiteUrl,
+        description: config.product?.description,
         verbose: Boolean(options.verbose && spinnersEnabled),
       });
   if (profileSpinner) profileSpinner.succeed(`Product analyzed (confidence: ${Math.round(profile.confidence * 100)}%)`);
@@ -134,7 +138,7 @@ export async function scanCommand(options: {
   const synthSpinner = spinnersEnabled ? ora('Synthesizing business events...').start() : null;
   const synthesized = await synthesizeEvents(interactions, profile, {
     fast: options.fast,
-    apiKey: process.env.OPENAI_API_KEY,
+    apiKey: llmKey?.key,
     granular: options.granular,
     verbose: Boolean(options.verbose && spinnersEnabled),
     files,

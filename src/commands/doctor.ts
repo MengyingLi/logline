@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { getTrackingPlanPath } from '../lib/utils/tracking-plan';
+import { getLLMApiKey } from '../lib/utils/llm';
 
 interface CheckResult {
   label: string;
@@ -41,14 +42,19 @@ export async function doctorCommand(options: { cwd?: string }): Promise<void> {
     hint: nodeMajor < 20 ? 'Logline requires Node.js 20 or later' : undefined,
   });
 
-  // ── OpenAI key ───────────────────────────────────────────────────────────
-  const hasOpenAI = Boolean(process.env.OPENAI_API_KEY);
+  // ── LLM API key (any supported provider) ────────────────────────────────
+  const llmKey = getLLMApiKey();
+  const llmLabel = llmKey
+    ? llmKey.provider === 'anthropic' ? 'ANTHROPIC_API_KEY'
+      : llmKey.provider === 'gemini' ? 'GOOGLE_API_KEY'
+      : 'OPENAI_API_KEY'
+    : 'LLM API key';
   checks.push({
-    label: 'OPENAI_API_KEY',
+    label: llmLabel,
     ok: true, // optional — warn, not fail
-    warn: !hasOpenAI,
-    value: hasOpenAI ? `set (${process.env.OPENAI_API_KEY?.slice(0, 7)}…)` : 'not set',
-    hint: hasOpenAI ? undefined : 'Optional. Set for smart event detection. Use --fast for regex-only mode.',
+    warn: !llmKey,
+    value: llmKey ? `set (${llmKey.key.slice(0, 10)}… via ${llmKey.provider})` : 'not set',
+    hint: llmKey ? undefined : 'Optional. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY for smart event detection. Use --fast for regex-only mode.',
   });
 
   // ── git ──────────────────────────────────────────────────────────────────
