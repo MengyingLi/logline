@@ -19,6 +19,20 @@ export interface CodeLocation {
   hint?: string;
 }
 
+/**
+ * Broad product category — used to adapt priority guidance and event naming
+ * in the synthesis prompt without hardcoding SaaS-specific assumptions.
+ * Detected automatically by the business reasoner during profile analysis.
+ */
+export type ProductType =
+  | 'saas'           // B2B/B2C subscription tools — Slack, Figma, Notion
+  | 'ecommerce'      // Online stores, retail — Shopify storefront, Amazon
+  | 'marketplace'    // Two-sided platforms — Airbnb, Etsy, Upwork
+  | 'developer-tool' // APIs, CLIs, SDKs, developer platforms — Stripe, Vercel, GitHub
+  | 'consumer-app'   // Social, fitness, entertainment consumer apps — Instagram, Duolingo
+  | 'media'          // Content platforms, news, streaming — YouTube, Substack
+  | 'other';         // Anything that doesn't fit the above
+
 export interface ProductProfile {
   mission: string;
   valueProposition: string;
@@ -26,6 +40,8 @@ export interface ProductProfile {
   userPersonas: string[];
   keyMetrics: string[];
   confidence: number; // 0-1
+  /** Broad product category for adapting synthesis priority guidance */
+  productType?: ProductType;
 }
 
 export interface DetectedEvent {

@@ -61,6 +61,8 @@ export class BusinessReasoner {
         verbose: Boolean(context.verbose),
         fallback: {},
       });
+      const VALID_TYPES = new Set(['saas', 'ecommerce', 'marketplace', 'developer-tool', 'consumer-app', 'media', 'other']);
+      const rawType = typeof parsed.productType === 'string' ? parsed.productType : undefined;
       return {
         mission: parsed.mission || 'Not specified',
         valueProposition: parsed.valueProposition || 'Not specified',
@@ -68,6 +70,7 @@ export class BusinessReasoner {
         userPersonas: parsed.userPersonas || [],
         keyMetrics: parsed.keyMetrics || [],
         confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.5,
+        productType: rawType && VALID_TYPES.has(rawType) ? (rawType as import('../types').ProductType) : 'other',
       };
     } catch (error) {
       return {
@@ -204,7 +207,7 @@ export class BusinessReasoner {
       prompt += `Detected Domain Entities:\n${context.entities.join(', ')}\n\n`;
     }
 
-    prompt += `Based on the information above, provide a comprehensive product profile.\n\nIMPORTANT: Avoid generic descriptions. Be specific about what this product actually does based on the codebase, entities, and API routes you see.\n\nFormat your response as JSON:\n{\n  \"mission\": \"Core mission statement\",\n  \"valueProposition\": \"Primary value proposition\",\n  \"businessGoals\": [\"goal1\", \"goal2\"],\n  \"userPersonas\": [\"persona1\", \"persona2\"],\n  \"keyMetrics\": [\"metric1\", \"metric2\"],\n  \"confidence\": 0.0\n}`;
+    prompt += `Based on the information above, provide a comprehensive product profile.\n\nIMPORTANT: Avoid generic descriptions. Be specific about what this product actually does based on the codebase, entities, and API routes you see.\n\nFor productType, choose the single best fit:\n- "saas" — B2B/B2C subscription tools (Slack, Figma, Notion)\n- "ecommerce" — online stores, retail (Shopify storefront, Amazon)\n- "marketplace" — two-sided platforms (Airbnb, Etsy, Upwork)\n- "developer-tool" — APIs, CLIs, SDKs, developer platforms (Stripe, Vercel, GitHub)\n- "consumer-app" — social, fitness, entertainment consumer apps (Instagram, Duolingo)\n- "media" — content platforms, news, streaming (YouTube, Substack)\n- "other" — anything that doesn't fit the above\n\nFormat your response as JSON:\n{\n  \"mission\": \"Core mission statement\",\n  \"valueProposition\": \"Primary value proposition\",\n  \"businessGoals\": [\"goal1\", \"goal2\"],\n  \"userPersonas\": [\"persona1\", \"persona2\"],\n  \"keyMetrics\": [\"metric1\", \"metric2\"],\n  \"productType\": \"saas\",\n  \"confidence\": 0.0\n}`;
 
     return prompt;
   }

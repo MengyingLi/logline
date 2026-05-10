@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import type { ProductProfile, CodeLocation, SignalType, FileContent } from '../types';
+import type { ProductProfile, ProductType, CodeLocation, SignalType, FileContent } from '../types';
 import type { RawInteraction, SynthesizedEvent, PropertySpec } from './types';
 import {
   extractLikelyObjectFromPath,
@@ -32,6 +32,14 @@ interface SynthesisContext {
   // ── Domain model ──────────────────────────────────────────────────────────
   /** Domain entities extracted from the codebase (Prisma models, TypeScript types, etc.) */
   entities: string[];
+
+  // ── Product category ─────────────────────────────────────────────────────
+  /**
+   * Broad product type detected during profile analysis.
+   * Used to adapt priority guidance so the LLM knows what events are "critical"
+   * for this type of product instead of defaulting to SaaS assumptions.
+   */
+  productType: ProductType;
 
   // ── Scan configuration ────────────────────────────────────────────────────
   /** Whether to produce fine-grained events (true) or group into business events (false) */
@@ -128,12 +136,77 @@ function buildInteractionsSection(
 }
 
 /**
+ * Builds the priority-guidance block of the synthesis prompt.
+ * Defines what "critical / high / medium / low" means for THIS type of product,
+ * replacing a one-size-fits-all SaaS definition with product-type-aware guidance.
+ *
+ * Extension points:
+ *   - Add a new `case` for a product type not yet covered.
+ *   - Pass `context.pricingTiers` to mark monetization-critical events explicitly.
+ *   - Load per-project overrides from .logline/config.json (e.g. "checkout is always critical").
+ */
+function buildPriorityGuidanceSection(context: SynthesisContext): string {
+  const byType: Record<ProductType, string[]> = {
+    saas: [
+      'critical — signup / onboarding completion, first core action, upgrade / payment, invite sent',
+      'high    — daily-driver feature usage (create, publish, collaborate)',
+      'medium  — secondary features, settings changes, integrations connected',
+      'low     — UI preferences, cosmetic toggles, help/docs opened',
+    ],
+    ecommerce: [
+      'critical — purchase completed, checkout started, payment submitted',
+      'high    — product viewed, add-to-cart, search performed, wishlist added',
+      'medium  — filter/sort applied, coupon redeemed, account created',
+      'low     — page viewed, UI navigation, tooltip shown',
+    ],
+    marketplace: [
+      'critical — listing created, transaction completed, first match made',
+      'high    — search performed, booking/offer submitted, message sent',
+      'medium  — profile updated, review submitted, listing saved',
+      'low     — browse/filter actions, UI navigation',
+    ],
+    'developer-tool': [
+      'critical — first API call / integration connected, key provisioned, project created',
+      'high    — API endpoint called, SDK method used, deployment triggered, error encountered',
+      'medium  — config changed, webhook registered, team member invited',
+      'low     — docs opened, dashboard page viewed, UI toggle',
+    ],
+    'consumer-app': [
+      'critical — account created, core value action completed (first post, first session, goal set)',
+      'high    — content created, social action taken (share, follow, like), session started',
+      'medium  — settings changed, notification preferences set, feature explored',
+      'low     — UI navigation, tooltip shown, passive page view',
+    ],
+    media: [
+      'critical — subscription started, content published, paywall conversion',
+      'high    — content viewed/played, search performed, content shared',
+      'medium  — playlist/collection created, comment posted, notification enabled',
+      'low     — UI navigation, volume changed, quality toggled',
+    ],
+    other: [
+      'critical — the single action that delivers the core value promise',
+      'high    — primary feature usage that drives retention',
+      'medium  — secondary features, configuration, onboarding steps',
+      'low     — UI/cosmetic interactions, passive views',
+    ],
+  };
+
+  const lines = byType[context.productType] ?? byType.other;
+
+  return [
+    '## Priority Guidance',
+    '',
+    `This is a **${context.productType}** product. Use these priority definitions:`,
+    ...lines,
+  ].join('\n');
+}
+
+/**
  * Builds the decision-rules block of the synthesis prompt.
  * This instructs the LLM on *when* to track an interaction and at what priority.
  * Granularity mode (one event per interaction vs. grouped business events) is set here.
  *
  * Extension points:
- *   - Add domain-specific priority overrides (e.g. "payment events are always critical").
  *   - Incorporate existing tracking plan gaps so the LLM focuses on what's missing.
  */
 function buildDecisionRulesSection(context: SynthesisContext): string {
@@ -145,9 +218,9 @@ function buildDecisionRulesSection(context: SynthesisContext): string {
     '## Decision Rules',
     '',
     'For each interaction (or group of related interactions), decide:',
-    '1. Should it be tracked? Not everything needs an event. Skip pure UI/cosmetic interactions.',
+    '1. Should it be tracked? Refer to Signal Quality above — skip internal implementation and semantic mismatches.',
     '2. What business event name? Use object_action format (snake_case). Examples: workflow_created, template_selected, step_configured.',
-    '3. Priority: critical (activation events), high (core usage), medium (secondary features), low (settings/UI).',
+    '3. What priority? Use the Priority Guidance section above for this product type.',
     `4. ${groupingRule}`,
   ].join('\n');
 }
@@ -219,8 +292,9 @@ function buildSignalQualitySection(): string {
     '### TRACK: Genuine product moments',
     '- Explicit user intent: button clicks, form submits, confirmed modals, keyboard shortcuts.',
     '- State transitions that matter to the business: creation, deletion, publishing,',
-    '  activation, upgrade, invite, error encountered.',
-    '- "Would a product manager care about this event in a funnel or retention chart?"',
+    '  purchase, deployment, connection, error encountered — see Priority Guidance for',
+    '  what matters most for this specific product type.',
+    '- "Would a product manager care about this event in a dashboard or analysis?"',
     '  If yes → track. If no → skip.',
     '',
     'Use the `skipped` array in your response to explicitly list interaction indices',
@@ -285,6 +359,7 @@ function buildSynthesisPrompt(
     buildProductSection(context),
     buildDomainSection(context),
     buildSignalQualitySection(),
+    buildPriorityGuidanceSection(context),
     buildInteractionsSection(interactionSummaries),
     buildDecisionRulesSection(context),
     buildNamingRulesSection(),
@@ -411,6 +486,7 @@ async function llmSynthesis(
     keyMetrics: profile.keyMetrics ?? [],
     userPersonas: profile.userPersonas ?? [],
     entities,
+    productType: profile.productType ?? 'other',
     granular: Boolean(granular),
   };
 
@@ -542,7 +618,11 @@ function toPriority(value: unknown): SynthesizedEvent['priority'] {
 function scorePriority(eventName: string, interaction: RawInteraction): SynthesizedEvent['priority'] {
   const n = eventName.toLowerCase();
   const isWrite = /_(created|deleted|updated|saved|submitted|upgraded|invited)$/.test(n);
-  const isActivationLike = /(signup|signed_up|onboard|activated|upgrade|upgraded|subscribe|subscribed|purchase|purchased|payment|paid)/.test(n);
+  // Covers critical moments across all product types:
+  // saas: signup/onboard/upgrade/subscribe | ecommerce: purchase/checkout/cart
+  // marketplace: listing/transaction/match | developer-tool: api_key/deployed/integration
+  // consumer: signup/session_started | media: subscribed/published
+  const isActivationLike = /(signup|signed_up|onboard|activated|upgrade|upgraded|subscribe|subscribed|purchase|purchased|payment|paid|checkout|order_placed|listing_created|transaction|api_key|deployed|integration_connected|session_started|published)/.test(n);
   const isUiOnly = interaction.type === 'toggle' || interaction.type === 'click_handler';
 
   if (isActivationLike) return 'critical';
