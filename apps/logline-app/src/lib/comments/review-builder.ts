@@ -5,23 +5,31 @@ import type { DiffFile } from '@/types';
 interface ReviewComment {
   path: string;
   line: number;
+  side: 'RIGHT';
+  commit_id: string;
   body: string;
 }
 
-export function buildReview(events: SynthesizedEvent[], diffs: DiffFile[]): { summary: string; comments: ReviewComment[] } {
+export function buildReview(
+  events: SynthesizedEvent[],
+  diffs: DiffFile[],
+  headSha: string
+): { summary: string; comments: ReviewComment[] } {
   const comments: ReviewComment[] = [];
 
   for (const event of events) {
     const diff = diffs.find((d) => d.path === event.location.file);
     if (!diff) continue;
-    const diffLine = mapSourceLineToDiffLine(event.location.line, diff);
-    if (!diffLine) continue;
+    const line = resolveCommentLine(event.location.line, diff);
+    if (!line) continue;
 
     const trackingCode = buildTrackingCodeFromEvent(event);
 
     comments.push({
       path: event.location.file,
-      line: diffLine,
+      line,
+      side: 'RIGHT',
+      commit_id: headSha,
       body: buildSuggestionComment(event, trackingCode),
     });
   }
@@ -33,14 +41,15 @@ export function buildReview(events: SynthesizedEvent[], diffs: DiffFile[]): { su
 }
 
 export async function postReview(
-  octokit: any,
+  octokit: { request: (route: string, params: Record<string, unknown>) => Promise<unknown> },
   owner: string,
   repo: string,
   prNumber: number,
   events: SynthesizedEvent[],
-  diffs: DiffFile[]
+  diffs: DiffFile[],
+  headSha: string
 ): Promise<void> {
-  const { summary, comments } = buildReview(events, diffs);
+  const { summary, comments } = buildReview(events, diffs, headSha);
   if (comments.length === 0) return;
 
   await octokit.request('POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews', {
@@ -52,15 +61,16 @@ export async function postReview(
     comments: comments.map((c) => ({
       path: c.path,
       line: c.line,
+      side: c.side,
+      commit_id: c.commit_id,
       body: c.body,
     })),
   });
 }
 
-function mapSourceLineToDiffLine(sourceLine: number, diff: DiffFile): number | null {
-  const mapped = diff.sourceToDiffLine[sourceLine];
-  if (typeof mapped === 'number') return mapped;
-  // fall back to nearest added source line so comment still anchors in changed hunk
+/** Prefer exact added-line mapping; otherwise nearest added line in the same file diff. */
+function resolveCommentLine(sourceLine: number, diff: DiffFile): number | null {
+  if (diff.addedLines.includes(sourceLine)) return sourceLine;
   if (diff.addedLines.length > 0) {
     let nearest = diff.addedLines[0];
     let bestDistance = Math.abs(sourceLine - nearest);
@@ -71,7 +81,7 @@ function mapSourceLineToDiffLine(sourceLine: number, diff: DiffFile): number | n
         bestDistance = distance;
       }
     }
-    return diff.sourceToDiffLine[nearest] ?? null;
+    return nearest;
   }
   return null;
 }
@@ -80,7 +90,7 @@ function buildSummaryComment(events: SynthesizedEvent[]): string {
   const rows = events
     .map((e) => `| \`${e.name}\` | ${e.location.file} | ${emojiForPriority(e.priority)} ${title(e.priority)} |`)
     .join('\n');
-  return `## 📊 Logline found ${events.length} events to track in this PR
+  return `## Logline found ${events.length} events to track in this PR
 
 | Event | File | Priority |
 |-------|------|----------|
@@ -100,14 +110,6 @@ function title(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-/**
- * Generate the tracking code string for a suggestion comment.
- *
- * Priority:
- *   1. event.properties populated → render exact property accessors (no hallucination)
- *   2. event.properties exists but empty → TODO comment with file hint
- *   3. No properties info → fall back to generateTrackingCode (scope-aware via logline-cli)
- */
 function buildTrackingCodeFromEvent(event: SynthesizedEvent): string {
   if (event.properties !== undefined) {
     if (event.properties.length > 0) {
@@ -120,13 +122,11 @@ function buildTrackingCodeFromEvent(event: SynthesizedEvent): string {
         .join('\n');
       return `track('${event.name}', {\n${propsStr}\n});`;
     }
-    // Properties extracted but nothing found — emit a helpful TODO
     const fileName = event.location.file.split('/').pop()?.replace(/\.(ts|tsx|js|jsx)$/, '') ?? '';
     const hint = fileName ? `check ${fileName} for available fields` : 'add properties from available context';
     return `track('${event.name}', {\n  // TODO: ${hint}\n});`;
   }
 
-  // No property extraction info — fall back to logline-cli's scope-aware generator
   return generateTrackingCode({
     suggestedEvent: event.name,
     reason: event.description,
@@ -137,4 +137,3 @@ function buildTrackingCodeFromEvent(event: SynthesizedEvent): string {
     includes: event.includes,
   });
 }
-

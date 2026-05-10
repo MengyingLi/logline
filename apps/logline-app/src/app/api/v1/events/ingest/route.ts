@@ -1,79 +1,134 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { Logger } from 'pino';
 import { resolveApiKey, insertEvent } from '@/lib/db';
 import type { FanoutConfig } from '@/lib/db';
+import { logger } from '@/lib/logger';
+import { IngestBodySchema } from '@/lib/validation/schemas';
+import { getOrCreateRequestId } from '@/lib/request-id';
 
-interface IngestBody {
-  event: string;
-  properties?: Record<string, unknown>;
-  timestamp?: string;
-  environment?: string;
+const MAX_BODY_BYTES = 256 * 1024;
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX = 1000;
+const rateBuckets = new Map<string, number[]>();
+
+function allowRateLimit(keyId: string): boolean {
+  const now = Date.now();
+  const windowStart = now - RATE_WINDOW_MS;
+  let stamps = rateBuckets.get(keyId);
+  if (!stamps) {
+    stamps = [];
+    rateBuckets.set(keyId, stamps);
+  }
+  while (stamps.length && stamps[0]! < windowStart) {
+    stamps.shift();
+  }
+  if (stamps.length >= RATE_MAX) return false;
+  stamps.push(now);
+  return true;
+}
+
+function isAllowedCustomFanoutUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    const allow = process.env.FANOUT_CUSTOM_URL_ALLOWLIST;
+    if (!allow) return u.protocol === 'https:';
+    const hosts = allow.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+    return hosts.includes(u.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function jsonWithRequestId(requestId: string, body: unknown, init?: ResponseInit): NextResponse {
+  const res = NextResponse.json(body, init);
+  res.headers.set('x-request-id', requestId);
+  return res;
 }
 
 /**
  * POST /api/v1/events/ingest
  *
- * Path A: stores the event in Supabase for the Logline dashboard.
- * Path B: fans out to any configured destinations (Segment, PostHog, Mixpanel, custom).
- *
  * Auth: Authorization: Bearer lk_<key>
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  // ── Auth ──────────────────────────────────────────────────────────────────
+  const requestId = getOrCreateRequestId(req);
+  const log = logger.child({ requestId, route: 'events/ingest' });
+
   const authHeader = req.headers.get('authorization') ?? '';
   const apiKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
   if (!apiKey) {
-    return NextResponse.json({ error: 'Missing Authorization header' }, { status: 401 });
+    return jsonWithRequestId(requestId, { error: 'Missing Authorization header' }, { status: 401 });
   }
 
   const resolved = await resolveApiKey(apiKey).catch(() => null);
   if (!resolved) {
-    return NextResponse.json({ error: 'Invalid or revoked API key' }, { status: 401 });
+    return jsonWithRequestId(requestId, { error: 'Invalid or revoked API key' }, { status: 401 });
   }
-  const { repoId, repo } = resolved;
 
-  // ── Parse body ────────────────────────────────────────────────────────────
-  let body: IngestBody;
+  const keyRateId = `k:${resolved.repoId}`;
+  if (!allowRateLimit(keyRateId)) {
+    return jsonWithRequestId(requestId, { error: 'Rate limit exceeded' }, { status: 429 });
+  }
+
+  const buf = await req.arrayBuffer();
+  if (buf.byteLength > MAX_BODY_BYTES) {
+    return jsonWithRequestId(requestId, { error: 'Payload too large' }, { status: 413 });
+  }
+
+  let raw: unknown;
   try {
-    body = (await req.json()) as IngestBody;
+    raw = JSON.parse(new TextDecoder().decode(buf));
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return jsonWithRequestId(requestId, { error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  if (!body.event || typeof body.event !== 'string') {
-    return NextResponse.json({ error: 'Missing required field: event' }, { status: 400 });
+  const parsed = IngestBodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return jsonWithRequestId(
+      requestId,
+      { error: 'Invalid body', details: parsed.error.flatten() },
+      { status: 400 }
+    );
   }
 
+  const body = parsed.data;
   const eventName = body.event.trim().toLowerCase();
   const properties = body.properties ?? null;
   const environment = body.environment ?? 'production';
 
-  // ── Path A: store in Supabase ─────────────────────────────────────────────
-  await insertEvent(repoId, eventName, properties, environment);
+  await insertEvent(resolved.repoId, eventName, properties, environment);
 
-  // ── Path B: fan out to configured destinations ────────────────────────────
-  const fanout = repo.fanout_config as FanoutConfig | null;
+  const fanout = resolved.repo.fanout_config as FanoutConfig | null;
   if (fanout) {
-    await Promise.allSettled([
-      fanout.segment && fanoutSegment(fanout.segment, eventName, properties, body.timestamp),
-      fanout.posthog && fanoutPostHog(fanout.posthog, eventName, properties, body.timestamp),
-      fanout.mixpanel && fanoutMixpanel(fanout.mixpanel, eventName, properties, body.timestamp),
-      fanout.amplitude && fanoutAmplitude(fanout.amplitude, eventName, properties, body.timestamp),
-      fanout.custom && fanoutCustom(fanout.custom, eventName, properties, body.timestamp),
-    ].filter(Boolean));
+    if (fanout.custom?.url && !isAllowedCustomFanoutUrl(fanout.custom.url)) {
+      log.warn({ url: fanout.custom.url }, 'blocked custom fanout URL (allowlist)');
+    } else {
+      await Promise.allSettled([
+        fanout.segment && fanoutSegment(log, fanout.segment, eventName, properties, body.timestamp),
+        fanout.posthog && fanoutPostHog(log, fanout.posthog, eventName, properties, body.timestamp),
+        fanout.mixpanel && fanoutMixpanel(log, fanout.mixpanel, eventName, properties, body.timestamp),
+        fanout.amplitude && fanoutAmplitude(log, fanout.amplitude, eventName, properties, body.timestamp),
+        fanout.custom &&
+          isAllowedCustomFanoutUrl(fanout.custom.url) &&
+          fanoutCustom(log, fanout.custom, eventName, properties, body.timestamp),
+      ].filter(Boolean));
+    }
   }
 
-  return NextResponse.json({ ok: true, event: eventName });
+  return jsonWithRequestId(requestId, { ok: true, event: eventName });
 }
 
-// ─── Fan-out implementations ──────────────────────────────────────────────────
+type FanoutLogger = Logger;
 
 async function fanoutSegment(
+  log: FanoutLogger,
   config: NonNullable<FanoutConfig['segment']>,
   event: string,
   properties: Record<string, unknown> | null,
   timestamp?: string
 ): Promise<void> {
-  await fetch('https://api.segment.io/v1/track', {
+  const res = await fetch('https://api.segment.io/v1/track', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -87,16 +142,20 @@ async function fanoutSegment(
       messageId: crypto.randomUUID(),
     }),
   });
+  if (!res.ok) {
+    log.warn({ destination: 'segment', status: res.status }, 'fanout failed');
+  }
 }
 
 async function fanoutPostHog(
+  log: FanoutLogger,
   config: NonNullable<FanoutConfig['posthog']>,
   event: string,
   properties: Record<string, unknown> | null,
   timestamp?: string
 ): Promise<void> {
   const host = config.host ?? 'https://app.posthog.com';
-  await fetch(`${host}/capture/`, {
+  const res = await fetch(`${host}/capture/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -106,15 +165,19 @@ async function fanoutPostHog(
       timestamp: timestamp ?? new Date().toISOString(),
     }),
   });
+  if (!res.ok) {
+    log.warn({ destination: 'posthog', status: res.status }, 'fanout failed');
+  }
 }
 
 async function fanoutMixpanel(
+  log: FanoutLogger,
   config: NonNullable<FanoutConfig['mixpanel']>,
   event: string,
   properties: Record<string, unknown> | null,
   _timestamp?: string
 ): Promise<void> {
-  await fetch('https://api.mixpanel.com/track', {
+  const res = await fetch('https://api.mixpanel.com/track', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify([
@@ -124,15 +187,19 @@ async function fanoutMixpanel(
       },
     ]),
   });
+  if (!res.ok) {
+    log.warn({ destination: 'mixpanel', status: res.status }, 'fanout failed');
+  }
 }
 
 async function fanoutAmplitude(
+  log: FanoutLogger,
   config: NonNullable<FanoutConfig['amplitude']>,
   event: string,
   properties: Record<string, unknown> | null,
   timestamp?: string
 ): Promise<void> {
-  await fetch('https://api2.amplitude.com/2/httpapi', {
+  const res = await fetch('https://api2.amplitude.com/2/httpapi', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -148,15 +215,19 @@ async function fanoutAmplitude(
       ],
     }),
   });
+  if (!res.ok) {
+    log.warn({ destination: 'amplitude', status: res.status }, 'fanout failed');
+  }
 }
 
 async function fanoutCustom(
+  log: FanoutLogger,
   config: NonNullable<FanoutConfig['custom']>,
   event: string,
   properties: Record<string, unknown> | null,
   timestamp?: string
 ): Promise<void> {
-  await fetch(config.url, {
+  const res = await fetch(config.url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -168,4 +239,7 @@ async function fanoutCustom(
       timestamp: timestamp ?? new Date().toISOString(),
     }),
   });
+  if (!res.ok) {
+    log.warn({ destination: 'custom', status: res.status, url: config.url }, 'fanout failed');
+  }
 }

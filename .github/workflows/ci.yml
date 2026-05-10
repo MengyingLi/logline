@@ -20,3 +20,16 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      - name: logline-app build & test
+        working-directory: apps/logline-app
+        env:
+          NEXTAUTH_SECRET: ci-placeholder-secret-at-least-32-characters-long
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key-for-ci-only
+          STRIPE_SECRET_KEY: sk_test_placeholder_for_ci_build_only
+          LOG_LEVEL: warn
+        run: |
+          npm ci
+          npm run build
+          npm run typecheck
+          npm test

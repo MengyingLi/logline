@@ -1,13 +1,28 @@
-import { getInstallationByLogin, getReposByInstallation, getApiKeysForRepo } from '@/lib/db';
+import { getInstallationByLogin, getReposByInstallation } from '@/lib/db';
 import type { Repo } from '@/lib/db';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth-options';
+import { assertCanViewOwnerDashboard } from '@/lib/dashboard-auth';
 
 interface Props {
   params: Promise<{ owner: string }>;
 }
 
 export default async function OrgDashboard({ params }: Props) {
+  const session = await getServerSession(authOptions);
+  if (!session) redirect('/signin');
+
   const { owner } = await params;
+  try {
+    await assertCanViewOwnerDashboard(session, owner);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : '';
+    if (msg === 'NOT_FOUND') notFound();
+    if (msg === 'FORBIDDEN') redirect('/signin?error=AccessDenied');
+    redirect('/signin');
+  }
+
   const installation = await getInstallationByLogin(owner).catch(() => null);
   if (!installation) notFound();
 

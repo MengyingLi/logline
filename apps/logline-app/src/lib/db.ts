@@ -1,6 +1,7 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { randomBytes } from 'node:crypto';
+import { retryTransient } from '@/lib/retry';
 
 // ─── Client ──────────────────────────────────────────────────────────────────
 
@@ -249,30 +250,133 @@ export async function getEventCounts(
   repoId: number,
   days = 30
 ): Promise<Array<{ event_name: string; count: number; last_seen: string }>> {
-  const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  const { data, error } = await getDb()
-    .from('events')
-    .select('event_name, received_at')
-    .eq('repo_id', repoId)
-    .gte('received_at', since)
-    .order('received_at', { ascending: false });
-  if (error) throw error;
-
-  // Group in JS (avoids needing a Postgres aggregate RPC for now)
-  const counts = new Map<string, { count: number; last_seen: string }>();
-  for (const row of data ?? []) {
-    const cur = counts.get(row.event_name);
-    if (!cur) {
-      counts.set(row.event_name, { count: 1, last_seen: row.received_at });
-    } else {
-      cur.count++;
+  const { data, error } = await getDb().rpc('get_event_counts_for_repo', {
+    p_repo_id: repoId,
+    p_days: days,
+  });
+  if (error) {
+    // Fallback if RPC not deployed yet (older DB)
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    const { data: rows, error: selErr } = await getDb()
+      .from('events')
+      .select('event_name, received_at')
+      .eq('repo_id', repoId)
+      .gte('received_at', since);
+    if (selErr) throw selErr;
+    const counts = new Map<string, { count: number; last_seen: string }>();
+    for (const row of rows ?? []) {
+      const cur = counts.get(row.event_name);
+      if (!cur) {
+        counts.set(row.event_name, { count: 1, last_seen: row.received_at });
+      } else {
+        cur.count++;
+        if (row.received_at > cur.last_seen) cur.last_seen = row.received_at;
+      }
     }
+    return Array.from(counts.entries()).map(([event_name, { count, last_seen }]) => ({
+      event_name,
+      count,
+      last_seen,
+    }));
   }
-  return Array.from(counts.entries()).map(([event_name, { count, last_seen }]) => ({
-    event_name,
-    count,
-    last_seen,
+  const rows = (data ?? []) as Array<{ event_name: string; count: number | string; last_seen: string }>;
+  return rows.map((r) => ({
+    event_name: r.event_name,
+    count: typeof r.count === 'bigint' ? Number(r.count) : Number(r.count),
+    last_seen: r.last_seen,
   }));
+}
+
+function isUniqueViolation(error: { code?: string; message?: unknown }): boolean {
+  if ((error as { code?: string }).code === '23505') return true;
+  const msg = String(error.message ?? '');
+  return msg.includes('duplicate') || msg.includes('unique');
+}
+
+function isTransientSupabaseError(error: unknown): boolean {
+  const msg = String((error as Error)?.message ?? error ?? '');
+  return /timeout|ECONNRESET|ECONNREFUSED|fetch failed|network|socket/i.test(msg);
+}
+
+/** GitHub webhook idempotency — returns true if this delivery was newly claimed. */
+export async function claimWebhookDelivery(deliveryId: string, eventName: string): Promise<boolean> {
+  return retryTransient(
+    async () => {
+      const { error } = await getDb().from('processed_webhook_deliveries').insert({
+        delivery_id: deliveryId,
+        event_name: eventName,
+      });
+      if (!error) return true;
+      if (isUniqueViolation(error)) return false;
+      throw error instanceof Error ? error : new Error(String(error));
+    },
+    isTransientSupabaseError,
+    { retries: 4, minTimeoutMs: 200, factor: 2 }
+  );
+}
+
+/** Returns true if this is the first time we analyze this PR head (dedupe). */
+export async function tryAcquirePrAnalysisDedupe(
+  installationId: number,
+  repoFullName: string,
+  prNumber: number,
+  headSha: string
+): Promise<boolean> {
+  return retryTransient(
+    async () => {
+      const { error } = await getDb().from('pr_head_analysis_dedupe').insert({
+        installation_id: installationId,
+        repo_full_name: repoFullName,
+        pr_number: prNumber,
+        head_sha: headSha,
+      });
+      if (!error) return true;
+      if (isUniqueViolation(error)) return false;
+      throw error instanceof Error ? error : new Error(String(error));
+    },
+    isTransientSupabaseError,
+    { retries: 4, minTimeoutMs: 200, factor: 2 }
+  );
+}
+
+export interface FeedbackPayload {
+  accepted: Array<{ eventName: string; file: string; prNumber: number; timestamp: string }>;
+  rejected: Array<{ eventName: string; file: string; prNumber: number; reason?: string; timestamp: string }>;
+}
+
+export async function getFeedbackPayloadForRepo(repoId: number): Promise<FeedbackPayload> {
+  const { data, error } = await getDb().from('repo_feedback').select('payload').eq('repo_id', repoId).maybeSingle();
+  if (error) throw error;
+  const p = data?.payload as FeedbackPayload | undefined;
+  if (!p)
+    return {
+      accepted: [],
+      rejected: [],
+    };
+  return {
+    accepted: Array.isArray(p.accepted) ? p.accepted : [],
+    rejected: Array.isArray(p.rejected) ? p.rejected : [],
+  };
+}
+
+export async function mergeFeedbackPayload(repoId: number, updater: (prev: FeedbackPayload) => FeedbackPayload): Promise<void> {
+  const prev = await getFeedbackPayloadForRepo(repoId);
+  const next = updater(prev);
+  const { error } = await getDb()
+    .from('repo_feedback')
+    .upsert(
+      { repo_id: repoId, payload: next, updated_at: new Date().toISOString() },
+      { onConflict: 'repo_id' }
+    );
+  if (error) throw error;
+}
+
+export async function updateInstallationBilling(
+  installationId: number,
+  patch: Partial<Pick<Installation, 'plan' | 'stripe_customer_id' | 'stripe_subscription_id'>>
+): Promise<void> {
+  const { error } = await getDb().from('installations').update(patch).eq('id', installationId);
+  if (error) throw error;
 }
 
 /** Returns the most recent N raw events for a repo. */

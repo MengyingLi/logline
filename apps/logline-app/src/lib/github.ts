@@ -6,6 +6,15 @@ export interface GitHubInstallation {
   account: { login: string; type: string };
 }
 
+/**
+ * GitHub redirects after App setup with optional `setup_action`.
+ * Allow install/update; reject unexpected values to avoid acting on malformed callbacks.
+ */
+export function isAllowedInstallSetupAction(setupAction: string | null): boolean {
+  if (setupAction === null || setupAction === '') return true;
+  return setupAction === 'install' || setupAction === 'update';
+}
+
 /** Fetch installation metadata from GitHub using the App JWT. */
 export async function getGitHubInstallation(installationId: number): Promise<GitHubInstallation> {
   const appId = process.env.GITHUB_APP_ID;
@@ -31,7 +40,7 @@ export async function listInstallationRepos(
   const octokit = await getInstallationOctokit(installationId);
   const repos: Array<{ owner: string; name: string }> = [];
   let page = 1;
-  while (page <= 10) {
+  while (page <= 50) {
     const res = await octokit.request('GET /installation/repositories', {
       per_page: 100,
       page,

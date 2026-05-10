@@ -6,22 +6,29 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "tsx --test test/review-anchor.test.ts test/mask-secret.test.ts test/install-state.test.ts test/free-plan-policy.test.ts test/github-setup-action.test.ts test/api-error.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@octokit/webhooks": "^13.3.0",
     "@supabase/supabase-js": "^2.105.0",
     "logline-cli": "file:../..",
     "next": "^15.0.0",
+    "next-auth": "^4.24.11",
     "octokit": "^4.0.2",
+    "p-retry": "^6.2.1",
+    "pino": "^9.6.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "stripe": "^17.7.0"
+    "stripe": "^17.7.0",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "tsx": "^4.19.2",
     "typescript": "^5.9.3"
   }
 }

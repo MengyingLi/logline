@@ -1,13 +1,29 @@
 import { getRepo, getEventCounts, getApiKeysForRepo, getRecentEvents } from '@/lib/db';
 import type { DbEvent } from '@/lib/db';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '@/lib/auth-options';
+import { assertCanViewRepoDashboard } from '@/lib/dashboard-auth';
+import { maskApiKey } from '@/lib/mask-secret';
 
 interface Props {
   params: Promise<{ owner: string; repo: string }>;
 }
 
 export default async function RepoDashboard({ params }: Props) {
+  const session = await getServerSession(authOptions);
+  if (!session) redirect('/signin');
+
   const { owner, repo: repoName } = await params;
+  try {
+    await assertCanViewRepoDashboard(session, owner, repoName);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : '';
+    if (msg === 'NOT_FOUND') notFound();
+    if (msg === 'FORBIDDEN') redirect('/signin?error=AccessDenied');
+    redirect('/signin');
+  }
+
   const repo = await getRepo(owner, repoName).catch(() => null);
   if (!repo) notFound();
 
@@ -143,7 +159,9 @@ export default async function RepoDashboard({ params }: Props) {
               </p>
               {apiKeys.map((k) => (
                 <div key={k.id} style={styles.apiKeyRow}>
-                  <code style={styles.apiKey}>{k.key}</code>
+                  <code style={styles.apiKey} title="Masked key — copy from Logline CLI or regenerate in a future release">
+                    {maskApiKey(k.key)}
+                  </code>
                   <span style={styles.keyName}>{k.name}</span>
                 </div>
               ))}
@@ -151,7 +169,7 @@ export default async function RepoDashboard({ params }: Props) {
                 <pre style={{ margin: 0, fontSize: 12 }}>{`fetch('https://logline.dev/api/v1/events/ingest', {
   method: 'POST',
   headers: {
-    Authorization: 'Bearer ${apiKeys[0]?.key ?? 'lk_...'}',
+    Authorization: 'Bearer <YOUR_LK_KEY>',
     'Content-Type': 'application/json',
   },
   body: JSON.stringify({
@@ -160,6 +178,10 @@ export default async function RepoDashboard({ params }: Props) {
   }),
 });`}</pre>
               </div>
+              <p style={{ ...styles.helpText, marginTop: 8 }}>
+                Full keys are never shown in the browser. Use the CLI <code>logline init</code> or your saved secrets to
+                obtain the bearer token for ingestion.
+              </p>
             </section>
 
             {/* Recent events */}

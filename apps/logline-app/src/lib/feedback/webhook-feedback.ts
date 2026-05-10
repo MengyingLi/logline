@@ -7,7 +7,7 @@ interface ReviewCommentPayload {
   comment?: { body?: string; path?: string };
 }
 
-export function handleReviewCommentFeedback(payload: ReviewCommentPayload): void {
+export async function handleReviewCommentFeedback(payload: ReviewCommentPayload): Promise<void> {
   const action = payload.action ?? '';
   if (action !== 'created' && action !== 'edited') return;
 
@@ -21,7 +21,7 @@ export function handleReviewCommentFeedback(payload: ReviewCommentPayload): void
   const eventName = extractRejectedEventName(body);
   if (!eventName) return;
 
-  recordRejected(`${owner}/${repo}`, {
+  await recordRejected(`${owner}/${repo}`, {
     eventName,
     file: path,
     prNumber,

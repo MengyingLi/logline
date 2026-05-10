@@ -56,7 +56,7 @@ export async function parsePRDiff(
 async function listChangedFiles(octokit: Octokit, owner: string, repo: string, prNumber: number) {
   const files: Array<{ filename: string; status: string; patch?: string }> = [];
   let page = 1;
-  while (page <= 10) {
+  while (page <= 50) {
     const res = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}/files', {
       owner,
       repo,

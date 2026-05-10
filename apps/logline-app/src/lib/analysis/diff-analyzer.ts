@@ -12,37 +12,39 @@ import { checkEntitlement } from '@/lib/billing/entitlements';
 import { shouldSuggestEvent } from '@/lib/feedback/learner';
 import { syncTrackingPlan } from '@/lib/tracking-plan-sync';
 import type { DiffFile } from '@/types';
+import { tryAcquirePrAnalysisDedupe } from '@/lib/db';
+import { logger } from '@/lib/logger';
 
 interface PullRequestPayload {
   installation?: { id?: number };
   repository?: { owner?: { login?: string }; name?: string };
   number?: number;
-  pull_request?: { number?: number; head?: { ref?: string; sha?: string }; base?: { ref?: string }; merged?: boolean };
+  pull_request?: {
+    number?: number;
+    head?: { ref?: string; sha?: string };
+    base?: { ref?: string };
+    merged?: boolean;
+  };
 }
-
-const analyzedHeadShas = new Set<string>();
 
 export async function handlePullRequest(payload: PullRequestPayload): Promise<void> {
   const installationId = payload.installation?.id;
   const owner = payload.repository?.owner?.login;
   const repo = payload.repository?.name;
   const prNumber = payload.pull_request?.number ?? payload.number;
-  const branch = payload.pull_request?.head?.ref;
   const headSha = payload.pull_request?.head?.sha;
 
-  if (!installationId || !owner || !repo || !prNumber) return;
+  if (!installationId || !owner || !repo || !prNumber || !headSha) return;
   const repoFullName = `${owner}/${repo}`;
-  if (headSha) {
-    const dedupeKey = `${repoFullName}#${prNumber}#${headSha}`;
-    if (analyzedHeadShas.has(dedupeKey)) return;
-    analyzedHeadShas.add(dedupeKey);
-  }
+
+  const acquired = await tryAcquirePrAnalysisDedupe(installationId, repoFullName, prNumber, headSha);
+  if (!acquired) return;
 
   const entitled = await checkEntitlement(installationId, repoFullName);
   if (!entitled) return;
 
   const octokit = await getInstallationOctokit(installationId);
-  const { files, diffs } = await parsePRDiff(octokit, owner, repo, prNumber, branch);
+  const { files, diffs } = await parsePRDiff(octokit, owner, repo, prNumber, headSha);
   const interactions = detectInteractions(files as FileContent[]);
   const newInteractions = filterToNewLines(interactions, diffs);
   if (newInteractions.length === 0) return;
@@ -56,24 +58,27 @@ export async function handlePullRequest(payload: PullRequestPayload): Promise<vo
     confidence: 0,
   };
 
+  const openaiConfigured = Boolean(process.env.OPENAI_API_KEY);
+  if (!openaiConfigured) {
+    logger.warn({ repo: repoFullName, pr: prNumber }, 'OPENAI_API_KEY missing — using fast synthesis path');
+  }
+
   const events = await synthesizeEvents(newInteractions, profile, {
     fast: !process.env.OPENAI_API_KEY,
     apiKey: process.env.OPENAI_API_KEY,
     files: files as FileContent[],
   });
-  const filteredEvents = events
-    .filter((event) => shouldSuggestEvent(repoFullName, event.name))
-    .slice(0, 20);
-  if (filteredEvents.length === 0) return;
 
-  console.log('[logline-app] events to post:', filteredEvents.map((e) => ({
-    name: e.name,
-    file: e.location.file,
-    line: e.location.line,
-    properties: e.properties,
-  })));
+  const filteredEvents: typeof events = [];
+  for (const event of events) {
+    if (await shouldSuggestEvent(repoFullName, event.name)) {
+      filteredEvents.push(event);
+    }
+  }
+  const capped = filteredEvents.slice(0, 20);
+  if (capped.length === 0) return;
 
-  await postReview(octokit as any, owner, repo, prNumber, filteredEvents, diffs);
+  await postReview(octokit as Parameters<typeof postReview>[0], owner, repo, prNumber, capped, diffs, headSha);
 }
 
 export function filterToNewLines(interactions: RawInteraction[], diffs: DiffFile[]): RawInteraction[] {
@@ -93,7 +98,7 @@ export async function handleMergedPullRequest(payload: PullRequestPayload): Prom
   const baseBranch = payload.pull_request?.base?.ref ?? 'main';
   if (!installationId || !owner || !repo || !prNumber) return;
   const octokit = await getInstallationOctokit(installationId);
-  const implementedEvents = await detectImplementedEventsInPR(octokit as any, owner, repo, prNumber);
+  const implementedEvents = await detectImplementedEventsInPR(octokit as never, owner, repo, prNumber);
   await syncTrackingPlan({
     octokit,
     owner,
@@ -105,14 +110,14 @@ export async function handleMergedPullRequest(payload: PullRequestPayload): Prom
 }
 
 async function detectImplementedEventsInPR(
-  octokit: any,
+  octokit: { request: (route: string, params: Record<string, unknown>) => Promise<{ data: unknown }> },
   owner: string,
   repo: string,
   prNumber: number
 ): Promise<string[]> {
   const found = new Set<string>();
   let page = 1;
-  while (page <= 10) {
+  while (page <= 50) {
     const res = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}/files', {
       owner,
       repo,
@@ -120,7 +125,8 @@ async function detectImplementedEventsInPR(
       per_page: 100,
       page,
     });
-    for (const file of res.data as Array<{ patch?: string }>) {
+    const files = res.data as Array<{ patch?: string }>;
+    for (const file of files) {
       const patch = file.patch ?? '';
       for (const line of patch.split('\n')) {
         if (!line.startsWith('+') || line.startsWith('+++')) continue;
@@ -128,9 +134,8 @@ async function detectImplementedEventsInPR(
         if (m?.[1]) found.add(m[1].toLowerCase());
       }
     }
-    if (res.data.length < 100) break;
+    if (files.length < 100) break;
     page += 1;
   }
   return Array.from(found);
 }
-
