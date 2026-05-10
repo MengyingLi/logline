@@ -173,6 +173,63 @@ function buildNamingRulesSection(): string {
 }
 
 /**
+ * Builds the signal-quality block of the synthesis prompt.
+ * Teaches the LLM to distinguish genuine user-facing business events from
+ * internal implementation noise — without relying on hardcoded lists.
+ *
+ * This section instructs the LLM to use semantic reasoning about the *purpose*
+ * of the code, not just its syntactic shape. Add new categories here when you
+ * find patterns that produce systematic false positives.
+ *
+ * Extension points:
+ *   - Add a `context.skipPatterns` field loaded from .logline/config.json for
+ *     project-specific "always skip" rules (e.g. skip all events from test files).
+ *   - Add a "must track" category for high-value signals (e.g. anything touching
+ *     a payment or billing entity should never be skipped).
+ */
+function buildSignalQualitySection(): string {
+  return [
+    '## Signal Quality — What to Skip vs. Track',
+    '',
+    'Not everything detected in code is a meaningful business event. Use semantic',
+    'reasoning about the *purpose* of the code, not just its syntactic shape.',
+    '',
+    '### SKIP: Internal implementation (not user-facing)',
+    '- Data structure housekeeping: operations on internal caches, queues, registries,',
+    '  or timeout maps (e.g. `toastTimeouts.delete()`, `rateBuckets.set()`,',
+    '  `listeners.push()`). These are bookkeeping — not user actions.',
+    '- UI library internals: code whose only job is managing UI library state —',
+    '  toast systems, portals, animation state, context providers.',
+    '  Ask: "Is this file a *feature* or a *UI utility*?" Utilities → skip.',
+    '- Timer and cleanup mechanics: `setTimeout`, `clearTimeout`, `useEffect` cleanup',
+    '  callbacks, `requestAnimationFrame` — these run automatically, not on user intent.',
+    '- Infrastructure plumbing: retry loops, deduplication caches, request queuing,',
+    '  rate-limit counters. These are reliability mechanisms, not product moments.',
+    '',
+    '### SKIP: Semantic mismatches (wrong event meaning)',
+    '- `onChange` on a text/number input field ≠ entity created.',
+    '  It means the user is *typing*. If worth tracking, name it `*_renamed` or',
+    '  `*_field_changed`, not `*_created`. Only explicit save/submit/confirm actions',
+    '  qualify as creation events.',
+    '- `onDragStart` alone is rarely worth tracking. Track `*_reordered` on drag-end',
+    '  when the final order changes, not the start of a drag gesture.',
+    '- Toggle switches rendering a visual state ≠ a business state change. Track',
+    '  `*_enabled` / `*_disabled` only when the toggle affects a persisted setting.',
+    '',
+    '### TRACK: Genuine product moments',
+    '- Explicit user intent: button clicks, form submits, confirmed modals, keyboard shortcuts.',
+    '- State transitions that matter to the business: creation, deletion, publishing,',
+    '  activation, upgrade, invite, error encountered.',
+    '- "Would a product manager care about this event in a funnel or retention chart?"',
+    '  If yes → track. If no → skip.',
+    '',
+    'Use the `skipped` array in your response to explicitly list interaction indices',
+    'you are intentionally rejecting. This prevents fallback heuristics from re-emitting',
+    'events you determined are not worth tracking.',
+  ].join('\n');
+}
+
+/**
  * Builds the output-format block of the synthesis prompt.
  * Defines the exact JSON schema the LLM must return, including a concrete example.
  * The output format here must stay in sync with the parsing logic in `llmSynthesis`.
@@ -185,7 +242,10 @@ function buildOutputFormatSection(): string {
   return [
     '## Output Format',
     '',
-    'Return JSON only:',
+    'Return JSON only — two top-level keys:',
+    '- `events`: interactions worth tracking (as business events)',
+    '- `skipped`: indices of interactions you are intentionally NOT tracking',
+    '',
     '{',
     '  "events": [',
     '    {',
@@ -195,7 +255,8 @@ function buildOutputFormatSection(): string {
     '      "sourceInteractions": [0, 1, 2],',
     '      "includes": ["add_mapping", "remove_mapping"]',
     '    }',
-    '  ]',
+    '  ],',
+    '  "skipped": [3, 7, 11]',
     '}',
   ].join('\n');
 }
@@ -223,6 +284,7 @@ function buildSynthesisPrompt(
     'You are a product analytics expert. Given a product description and a list of code interactions detected in the codebase, determine which interactions should be tracked as analytics events.',
     buildProductSection(context),
     buildDomainSection(context),
+    buildSignalQualitySection(),
     buildInteractionsSection(interactionSummaries),
     buildDecisionRulesSection(context),
     buildNamingRulesSection(),
@@ -378,7 +440,7 @@ async function llmSynthesis(
       priority?: unknown;
       sourceInteractions?: unknown;
       includes?: unknown;
-    }> }>({
+    }>; skipped?: unknown[] }>({
       apiKey,
       system: 'You are a product analytics expert. Return only valid JSON.',
       prompt,
@@ -387,6 +449,14 @@ async function llmSynthesis(
       verbose: Boolean(verbose),
       fallback: { events: [] },
     });
+
+    // Respect explicit LLM rejections — these should not be re-emitted by the
+    // regex fallback. An interaction the LLM intentionally skips is different
+    // from one it simply didn't process.
+    const skippedByLLM = Array.isArray(response.skipped)
+      ? response.skipped.filter((v): v is number => typeof v === 'number')
+      : [];
+    for (const idx of skippedByLLM) coveredIndices.add(idx);
 
     for (const raw of response.events ?? []) {
       if (typeof raw.name !== 'string') continue;

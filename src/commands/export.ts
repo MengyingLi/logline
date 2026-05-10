@@ -43,7 +43,7 @@ export async function exportCommand(options: {
       defaultFilename = 'glassflow-config.json';
       break;
     default:
-      console.error(chalk.red(`Unknown format: ${format}. Use: segment, amplitude, opentelemetry, glassflow`));
+      console.error(chalk.red(`Unsupported format: '${format}'. Supported formats: segment, amplitude, opentelemetry, glassflow`));
       process.exit(1);
   }
 
