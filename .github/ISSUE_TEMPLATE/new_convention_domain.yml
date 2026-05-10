@@ -1,0 +1,65 @@
+name: New Convention Domain
+description: Propose a new industry-specific event convention domain
+labels: ["convention", "enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Convention domains are one of the most impactful ways to contribute to Logline. A new domain immediately improves coverage reporting for every project in that industry vertical.
+
+        Before filling this out, read [`conventions/billing/events.yaml`](../../conventions/billing/events.yaml) to understand the expected format and level of detail.
+
+  - type: input
+    id: domain_name
+    attributes:
+      label: Industry / domain name
+      description: Short identifier for the domain (lowercase, no spaces). This becomes the directory name under `conventions/`.
+      placeholder: marketplace, devtools, healthcare, edtech, …
+    validations:
+      required: true
+
+  - type: textarea
+    id: example_products
+    attributes:
+      label: Example products in this space
+      description: List 3–5 real products or companies where this domain applies, so reviewers can evaluate the event list against real use cases.
+      placeholder: |
+        - Etsy, Amazon Marketplace, Shopify (marketplace sellers)
+        - GitHub, GitLab, Linear (devtools)
+    validations:
+      required: true
+
+  - type: textarea
+    id: events
+    attributes:
+      label: Core events (5–10)
+      description: |
+        List the most important events for this domain. For each event, provide:
+        - **Event name** in `object_action` format (snake_case)
+        - **Required properties** and their types
+        - **When to fire** — one sentence from the user's perspective
+
+        Use the lifecycle vocabulary: `attempt`, `success`, `fail`, `start`, `complete`, `skip`.
+      placeholder: |
+        **listing_published** (lifecycle: success)
+        Required: listing_id (string), category (string), price_cents (number)
+        Fire when a seller publishes a new listing and it becomes visible to buyers.
+
+        **order_placed** (lifecycle: success)
+        Required: order_id (string), listing_id (string), amount_cents (number)
+        Fire when a buyer completes checkout and the order is confirmed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: business_value
+    attributes:
+      label: Why these events matter for this industry
+      description: What business decisions or analyses do these events enable? What would a product team be flying blind on without them?
+      placeholder: |
+        Marketplace businesses need to track listing publish rates to understand seller activation,
+        and order placement to measure buyer conversion. Without these events, teams cannot compute
+        seller-to-buyer conversion funnels or identify which listing categories drive the most revenue.
+    validations:
+      required: true

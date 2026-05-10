@@ -1,0 +1,77 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please fill out the sections below.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the bug
+      description: A clear description of what went wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How do we reproduce the issue?
+      placeholder: |
+        1. Run `logline scan` in a project with ...
+        2. See error ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened?
+    validations:
+      required: true
+
+  - type: input
+    id: logline_version
+    attributes:
+      label: Logline version
+      description: Run `npm list -g logline-cli` and paste the output.
+      placeholder: logline-cli@x.y.z
+    validations:
+      required: true
+
+  - type: input
+    id: node_version
+    attributes:
+      label: Node.js version
+      description: Run `node --version`.
+      placeholder: v20.x.x
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 14, Ubuntu 22.04, Windows 11, …
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant output or error
+      description: Paste any relevant terminal output, error messages, or stack traces.
+      render: shell

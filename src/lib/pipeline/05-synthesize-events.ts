@@ -9,6 +9,231 @@ import {
 } from '../utils/event-name';
 import { llmCall } from '../utils/llm';
 
+// ─── Synthesis Context ────────────────────────────────────────────────────────
+
+/**
+ * All context available when building the synthesis prompt.
+ * Adding new fields here is the primary extension point for improving event quality.
+ * See CONTRIBUTING.md for how to add new context signals.
+ */
+interface SynthesisContext {
+  // ── Product identity ──────────────────────────────────────────────────────
+  /** LLM-derived product mission (from README, package.json, website) */
+  mission: string;
+  /** Verbatim user-provided description from .logline/config.json product.description */
+  productDescription?: string;
+  /** Business goals inferred by product analysis */
+  businessGoals: string[];
+  /** Key metrics this product cares about */
+  keyMetrics: string[];
+  /** User personas detected */
+  userPersonas: string[];
+
+  // ── Domain model ──────────────────────────────────────────────────────────
+  /** Domain entities extracted from the codebase (Prisma models, TypeScript types, etc.) */
+  entities: string[];
+
+  // ── Scan configuration ────────────────────────────────────────────────────
+  /** Whether to produce fine-grained events (true) or group into business events (false) */
+  granular: boolean;
+}
+
+// ─── Prompt Section Builders ──────────────────────────────────────────────────
+
+/**
+ * Builds the product identity block of the synthesis prompt.
+ * This tells the LLM what the product does, who uses it, and what metrics matter.
+ * Extend this section to improve event naming quality by adding more product context.
+ *
+ * Extension points:
+ *   - Add `context.competitorContext` to help the LLM understand the market.
+ *   - Add `context.pricingTiers` so the LLM can flag monetization-critical events.
+ */
+function buildProductSection(context: SynthesisContext): string {
+  const lines: string[] = [
+    '## Product',
+    '',
+    `- Mission: ${context.mission}`,
+  ];
+
+  if (context.productDescription) {
+    lines.push(`- User-provided description: "${context.productDescription}"`);
+  }
+
+  lines.push(`- Business Goals: ${context.businessGoals.join(', ') || 'unknown'}`);
+  lines.push(`- Key Metrics: ${context.keyMetrics.join(', ') || 'unknown'}`);
+
+  if (context.userPersonas.length > 0) {
+    lines.push(`- User Personas: ${context.userPersonas.join(', ')}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Builds the domain model block of the synthesis prompt.
+ * Surfaces the core business entities detected in the codebase so the LLM can
+ * produce accurate, domain-specific event names instead of generic ones.
+ *
+ * Extension points:
+ *   - Pass entity relationships (e.g. "BidRequest belongs to WorkOrder") for richer naming.
+ *   - Add lifecycle states per entity (e.g. "WorkOrder: draft → active → closed").
+ *   - Populate from the context graph produced by stage 04b-extract-context.
+ */
+function buildDomainSection(context: SynthesisContext): string {
+  if (context.entities.length === 0) {
+    return [
+      '## Domain Model',
+      '',
+      'No domain entities were detected in this codebase.',
+    ].join('\n');
+  }
+
+  return [
+    '## Domain Model',
+    '',
+    'These are the core business entities detected in this codebase. Use them to name events accurately.',
+    'Event names should reference these entities where possible (e.g. if "BidRequest" is an entity, prefer "bid_request_submitted" over "form_submitted").',
+    '',
+    `Detected entities: ${context.entities.join(', ')}`,
+  ].join('\n');
+}
+
+/**
+ * Builds the detected-interactions block of the synthesis prompt.
+ * This is the raw input the LLM will classify — one JSON array of interaction summaries.
+ *
+ * Extension points:
+ *   - Add a `userFlow` field per summary to give the LLM navigation context.
+ *   - Include a `similarExistingEvents` field so the LLM avoids duplicating tracked events.
+ */
+function buildInteractionsSection(
+  interactionSummaries: Array<{
+    index: number;
+    type: string;
+    file: string;
+    functionName: string;
+    entities: string[];
+    uiHint: string;
+    suggestedEvent: string | null;
+    preGroupKey: string;
+    snippet: string;
+  }>
+): string {
+  return [
+    '## Detected Interactions',
+    '',
+    JSON.stringify(interactionSummaries, null, 2),
+  ].join('\n');
+}
+
+/**
+ * Builds the decision-rules block of the synthesis prompt.
+ * This instructs the LLM on *when* to track an interaction and at what priority.
+ * Granularity mode (one event per interaction vs. grouped business events) is set here.
+ *
+ * Extension points:
+ *   - Add domain-specific priority overrides (e.g. "payment events are always critical").
+ *   - Incorporate existing tracking plan gaps so the LLM focuses on what's missing.
+ */
+function buildDecisionRulesSection(context: SynthesisContext): string {
+  const groupingRule = context.granular
+    ? 'Keep each interaction as a separate event.'
+    : 'Group related interactions into single business events where it makes sense. Use preGroupKey and suggestedEvent as hints for likely grouping, but feel free to adjust.';
+
+  return [
+    '## Decision Rules',
+    '',
+    'For each interaction (or group of related interactions), decide:',
+    '1. Should it be tracked? Not everything needs an event. Skip pure UI/cosmetic interactions.',
+    '2. What business event name? Use object_action format (snake_case). Examples: workflow_created, template_selected, step_configured.',
+    '3. Priority: critical (activation events), high (core usage), medium (secondary features), low (settings/UI).',
+    `4. ${groupingRule}`,
+  ].join('\n');
+}
+
+/**
+ * Builds the naming-rules block of the synthesis prompt.
+ * Enforces the object_action snake_case convention and lists anti-patterns.
+ *
+ * Extension points:
+ *   - Add project-specific naming conventions loaded from .logline/config.json.
+ *   - Add a list of already-approved event names to enforce consistency.
+ */
+function buildNamingRulesSection(): string {
+  return [
+    '## Naming Rules',
+    '',
+    '- NEVER produce garbage names like save_saved, add_added, click_clicked',
+    '- Name from the USER\'s perspective, not the code\'s perspective',
+    '- object_action format: the object is the business entity, the action is past tense',
+    '- Include a clear description of what the event means in business terms',
+    '- sourceInteractions MUST reference the provided interaction index values only',
+  ].join('\n');
+}
+
+/**
+ * Builds the output-format block of the synthesis prompt.
+ * Defines the exact JSON schema the LLM must return, including a concrete example.
+ * The output format here must stay in sync with the parsing logic in `llmSynthesis`.
+ *
+ * Extension points:
+ *   - Add a `tags` field to the output schema for event categorization.
+ *   - Add a `userJourneyStage` field (acquisition/activation/retention) per event.
+ */
+function buildOutputFormatSection(): string {
+  return [
+    '## Output Format',
+    '',
+    'Return JSON only:',
+    '{',
+    '  "events": [',
+    '    {',
+    '      "name": "workflow_edited",',
+    '      "description": "User modified their workflow configuration",',
+    '      "priority": "high",',
+    '      "sourceInteractions": [0, 1, 2],',
+    '      "includes": ["add_mapping", "remove_mapping"]',
+    '    }',
+    '  ]',
+    '}',
+  ].join('\n');
+}
+
+/**
+ * Assembles all section builders into a single synthesis prompt string.
+ * Each section is separated by a blank line for readability.
+ * To add a new section, create a new builder function above and append it here.
+ */
+function buildSynthesisPrompt(
+  context: SynthesisContext,
+  interactionSummaries: Array<{
+    index: number;
+    type: string;
+    file: string;
+    functionName: string;
+    entities: string[];
+    uiHint: string;
+    suggestedEvent: string | null;
+    preGroupKey: string;
+    snippet: string;
+  }>
+): string {
+  const sections = [
+    'You are a product analytics expert. Given a product description and a list of code interactions detected in the codebase, determine which interactions should be tracked as analytics events.',
+    buildProductSection(context),
+    buildDomainSection(context),
+    buildInteractionsSection(interactionSummaries),
+    buildDecisionRulesSection(context),
+    buildNamingRulesSection(),
+    buildOutputFormatSection(),
+  ];
+
+  return sections.join('\n\n');
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 /**
  * Convert raw interactions into synthesized events.
  * In fast mode (no API key), uses regex-based naming heuristics.
@@ -17,7 +242,15 @@ import { llmCall } from '../utils/llm';
 export async function synthesizeEvents(
   interactions: RawInteraction[],
   profile: ProductProfile,
-  options: { fast?: boolean; apiKey?: string; granular?: boolean; verbose?: boolean; files?: FileContent[] }
+  options: {
+    fast?: boolean;
+    apiKey?: string;
+    granular?: boolean;
+    verbose?: boolean;
+    files?: FileContent[];
+    entities?: string[];
+    productDescription?: string;
+  }
 ): Promise<SynthesizedEvent[]> {
   const files = options.files ?? [];
 
@@ -25,7 +258,12 @@ export async function synthesizeEvents(
   if (options.fast || !options.apiKey) {
     events = regexFallbackSynthesis(interactions, { granular: options.granular });
   } else {
-    events = await llmSynthesis(interactions, profile, options.apiKey, options.granular, options.verbose);
+    events = await llmSynthesis(interactions, profile, options.apiKey, {
+      granular: options.granular,
+      verbose: options.verbose,
+      entities: options.entities,
+      productDescription: options.productDescription,
+    });
   }
 
   // Attach properties from source-code analysis when file contents are available.
@@ -90,10 +328,29 @@ async function llmSynthesis(
   interactions: RawInteraction[],
   profile: ProductProfile,
   apiKey: string,
-  granular?: boolean,
-  verbose?: boolean
+  options: {
+    granular?: boolean;
+    verbose?: boolean;
+    entities?: string[];
+    productDescription?: string;
+  }
 ): Promise<SynthesizedEvent[]> {
   if (interactions.length === 0) return [];
+
+  const { granular, verbose, entities = [], productDescription } = options;
+
+  // Build the SynthesisContext from profile + caller options.
+  // This is the single place where all context signals are assembled before
+  // being handed off to the prompt section builders.
+  const context: SynthesisContext = {
+    mission: profile.mission,
+    productDescription,
+    businessGoals: profile.businessGoals ?? [],
+    keyMetrics: profile.keyMetrics ?? [],
+    userPersonas: profile.userPersonas ?? [],
+    entities,
+    granular: Boolean(granular),
+  };
 
   const batchSize = 30;
   const allEvents: SynthesizedEvent[] = [];
@@ -114,7 +371,7 @@ async function llmSynthesis(
       snippet: r.codeContext.split('\n').slice(0, 5).join('\n'),
     }));
 
-    const prompt = buildSynthesisPrompt(profile, summaries, Boolean(granular));
+    const prompt = buildSynthesisPrompt(context, summaries);
     const response = await llmCall<{ events?: Array<{
       name?: unknown;
       description?: unknown;
@@ -189,58 +446,6 @@ async function llmSynthesis(
 
   const merged = deduplicateEvents([...allEvents, ...uncovered]);
   return granular ? merged : groupBusinessEdits(merged);
-}
-
-function buildSynthesisPrompt(
-  profile: ProductProfile,
-  interactionSummaries: Array<{
-    index: number;
-    type: string;
-    file: string;
-    functionName: string;
-    entities: string[];
-    uiHint: string;
-    suggestedEvent: string | null;
-    preGroupKey: string;
-    snippet: string;
-  }>,
-  granular: boolean
-): string {
-  return `You are a product analytics expert. Given a product description and a list of code interactions detected in the codebase, determine which interactions should be tracked as analytics events.
-
-Product:
-- Mission: ${profile.mission}
-- Key Metrics: ${(profile.keyMetrics ?? []).join(', ') || 'unknown'}
-- Business Goals: ${(profile.businessGoals ?? []).join(', ') || 'unknown'}
-
-Detected interactions:
-${JSON.stringify(interactionSummaries, null, 2)}
-
-For each interaction (or group of related interactions), decide:
-1. Should it be tracked? Not everything needs an event. Skip pure UI/cosmetic interactions.
-2. What business event name? Use object_action format (snake_case). Examples: workflow_created, template_selected, step_configured.
-3. Priority: critical (activation events), high (core usage), medium (secondary features), low (settings/UI).
-4. ${granular ? 'Keep each interaction as a separate event.' : 'Group related interactions into single business events where it makes sense. Use preGroupKey and suggestedEvent as hints for likely grouping, but feel free to adjust.'}
-
-Rules:
-- NEVER produce garbage names like save_saved, add_added, click_clicked
-- Name from the USER's perspective, not the code's perspective
-- object_action format: the object is the business entity, the action is past tense
-- Include a clear description of what the event means in business terms
-- sourceInteractions MUST reference the provided interaction index values only
-
-Return JSON only:
-{
-  "events": [
-    {
-      "name": "workflow_edited",
-      "description": "User modified their workflow configuration",
-      "priority": "high",
-      "sourceInteractions": [0, 1, 2],
-      "includes": ["add_mapping", "remove_mapping"]
-    }
-  ]
-}`;
 }
 
 function pickBestLocation(sourceInteractions: number[], interactions: RawInteraction[]): CodeLocation {

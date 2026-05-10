@@ -8,3 +8,8 @@ dist
 .logline
 .next
 test/fixtures/**/.logline/
+plan.md
+plan2.md
+plan3.md
+plan4.md
+mailmap.txt

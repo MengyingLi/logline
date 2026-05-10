@@ -117,7 +117,12 @@ export async function scanCommand(options: {
         description: config.product?.description,
         verbose: Boolean(options.verbose && spinnersEnabled),
       });
-  if (profileSpinner) profileSpinner.succeed(`Product analyzed (confidence: ${Math.round(profile.confidence * 100)}%)`);
+  if (profileSpinner) {
+    const missionPreview = profile.mission && !profile.mission.startsWith('Not analyzed')
+      ? ` — ${profile.mission.slice(0, 60)}${profile.mission.length > 60 ? '…' : ''}`
+      : '';
+    profileSpinner.succeed(`Product analyzed (confidence: ${Math.round(profile.confidence * 100)}%)${missionPreview}`);
+  }
 
   // Stage 4: Detect interactions (raw, unnamed)
   const detectSpinner = spinnersEnabled ? ora('Detecting interactions...').start() : null;
@@ -142,6 +147,8 @@ export async function scanCommand(options: {
     granular: options.granular,
     verbose: Boolean(options.verbose && spinnersEnabled),
     files,
+    entities: inventory.detectedEntities,
+    productDescription: config.product?.description,
   });
   if (synthSpinner) synthSpinner.succeed(`${synthesized.length} events identified`);
 

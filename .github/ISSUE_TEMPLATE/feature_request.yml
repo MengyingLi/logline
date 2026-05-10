@@ -1,0 +1,39 @@
+name: Feature Request
+description: Suggest an improvement or new capability
+labels: ["enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening a feature request, check whether it fits one of the existing contribution paths in [CONTRIBUTING.md](../../CONTRIBUTING.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem are you running into? What are you trying to accomplish?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe your preferred approach. Even a rough sketch is helpful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you consider, and why did you rule them out?
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: Describe a concrete scenario where this feature would be used. Who benefits and how?
+    validations:
+      required: true
