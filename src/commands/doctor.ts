@@ -36,9 +36,9 @@ export async function doctorCommand(options: { cwd?: string }): Promise<void> {
   const nodeMajor = parseInt(nodeVersion.replace('v', '').split('.')[0] ?? '0', 10);
   checks.push({
     label: 'Node.js version',
-    ok: nodeMajor >= 18,
+    ok: nodeMajor >= 20,
     value: nodeVersion,
-    hint: nodeMajor < 18 ? 'Logline requires Node.js 18 or later' : undefined,
+    hint: nodeMajor < 20 ? 'Logline requires Node.js 20 or later' : undefined,
   });
 
   // ── OpenAI key ───────────────────────────────────────────────────────────

@@ -305,7 +305,7 @@ Full API: [`docs/programmatic-api.md`](docs/programmatic-api.md)
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 20+ (required — see `engines` in package.json)
 - OpenAI API key — optional, enables LLM-powered event synthesis (`--fast` works without it)
 - Git — for `logline pr`
 - GitHub CLI `gh` — for auto PR creation

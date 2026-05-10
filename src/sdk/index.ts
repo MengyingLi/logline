@@ -69,22 +69,23 @@ export function flush(): void {
   const batch = queue.splice(0);
   const { endpoint, apiKey, environment } = config as Required<LoglineConfig>;
 
-  for (const item of batch) {
-    fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
+  // Single POST with the full batch — one HTTP call regardless of queue size.
+  fetch(endpoint + '/batch', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      events: batch.map((item) => ({
         event: item.event,
         properties: item.properties,
         environment,
         timestamp: item.timestamp,
-      }),
-      keepalive: true,
-    }).catch(() => {}); // silently drop on network error — never block the app
-  }
+      })),
+    }),
+    keepalive: true,
+  }).catch(() => {}); // silently drop on network error — never block the app
 }
 
 /** Stop the flush timer and send any remaining events. Call on server shutdown. */
